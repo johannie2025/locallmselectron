@@ -1,0 +1,51 @@
+{
+  "name": "lms-langues-offline",
+  "productName": "LMS Langues",
+  "version": "1.0.0",
+  "description": "LMS 100 % hors-ligne pour centre de formation de langues (kiosque Windows)",
+  "main": "electron/main.js",
+  "author": "Centre de formation",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 LMS_NO_KIOSK=1 electron .\"",
+    "build:web": "vite build",
+    "test": "node --test tests/engine.test.js",
+    "dist": "vite build && electron-builder --win --x64 --publish never",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.2",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.1",
+    "cross-env": "^7.0.3",
+    "electron": "^32.2.0",
+    "electron-builder": "^25.1.8",
+    "pdfjs-dist": "^4.6.82",
+    "postcss": "^8.4.47",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.13",
+    "vite": "^5.4.8",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.centre.lmslangues",
+    "productName": "LMS Langues",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "electron/**/*", "package.json"],
+    "asar": true,
+    "win": { "target": ["nsis", "portable"] },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "LMS-Langues-Setup-${version}.${ext}"
+    },
+    "portable": { "artifactName": "LMS-Langues-Portable-${version}.${ext}" }
+  }
+}
