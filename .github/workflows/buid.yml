@@ -1,0 +1,45 @@
+name: Build Windows (WISE LMS)
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # nécessaire pour publier la Release sur un tag v*
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Installer les dépendances (rebuild natif better-sqlite3 pour Electron via postinstall)
+        run: npm install --no-audit --no-fund
+
+      - name: Tests (scanner, quiz, gating)
+        run: npm test
+
+      - name: Build React + installeur Windows
+        run: npm run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false   # pas de signature de code (voir README)
+
+      - name: Publier les artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LMS-Wise-windows
+          path: |
+            release/*.exe
+          if-no-files-found: error
+
+      - name: Release GitHub (tags v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.exe
