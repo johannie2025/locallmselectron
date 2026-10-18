@@ -1,16 +1,16 @@
 {
-  "name": "lms-langues-offline",
-  "productName": "LMS Langues",
-  "version": "1.0.0",
-  "description": "LMS 100 % hors-ligne pour centre de formation de langues (kiosque Windows)",
+  "name": "wise-design-learning-systems",
+  "productName": "Wise Design Learning Systems",
+  "version": "1.2.0",
+  "description": "Wise Design Learning Systems — LMS 100 % hors-ligne pour centres de formation de langues",
   "main": "electron/main.js",
-  "author": "Centre de formation",
+  "author": "Wise Design",
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 LMS_NO_KIOSK=1 electron .\"",
     "build:web": "vite build",
-    "test": "node --test tests/engine.test.js",
+    "test": "node --test",
     "dist": "vite build && electron-builder --win --x64 --publish never",
     "postinstall": "electron-builder install-app-deps"
   },
@@ -34,18 +34,21 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.centre.lmslangues",
-    "productName": "LMS Langues",
-    "directories": { "output": "release" },
+    "appId": "com.wisedesign.wls",
+    "productName": "Wise Design Learning Systems",
+    "copyright": "Copyright © Wise Design — Intégrateur de Solutions & Automatisation IA",
+    "directories": { "output": "release", "buildResources": "build" },
     "files": ["dist/**/*", "electron/**/*", "package.json"],
+    "extraResources": [{ "from": "scripts", "to": "scripts" }],
     "asar": true,
-    "win": { "target": ["nsis", "portable"] },
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
     "nsis": {
       "oneClick": false,
       "perMachine": true,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "LMS-Langues-Setup-${version}.${ext}"
-    },
-    "portable": { "artifactName": "LMS-Langues-Portable-${version}.${ext}" }
+      "include": "build/installer.nsh",
+      "shortcutName": "Wise Design Learning Systems",
+      "artifactName": "Wise-Design-Learning-Systems-Setup-${version}.${ext}"
+    }
   }
 }

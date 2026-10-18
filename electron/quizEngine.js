@@ -33,12 +33,12 @@ function validateQuiz(q) {
     if (!TYPES.has(x.type)) errors.push(`${n} : type inconnu (mcq | true_false | fill_blank)`);
     if (!x.text) errors.push(`${n} : "text" manquant`);
     if (x.type === 'mcq') {
-      if (!Array.isArray(x.options) || x.options.length < 2) errors.push(`${n} : "options" (≥ 2) requis`);
+      if (!Array.isArray(x.options) || x.options.length < 2 || x.options.some((o) => !String(o).trim())) errors.push(`${n} : "options" (≥ 2, non vides) requis`);
       else if (!Array.isArray(x.answer) || !x.answer.length || x.answer.some((a) => !Number.isInteger(a) || a < 0 || a >= x.options.length))
         errors.push(`${n} : "answer" doit être un tableau d'indices valides`);
     }
     if (x.type === 'true_false' && typeof x.answer !== 'boolean') errors.push(`${n} : "answer" doit être true/false`);
-    if (x.type === 'fill_blank' && (!Array.isArray(x.answers) || !x.answers.length)) errors.push(`${n} : "answers" (liste de réponses acceptées) requis`);
+    if (x.type === 'fill_blank' && (!Array.isArray(x.answers) || !x.answers.length || x.answers.some((a) => !String(a).trim()))) errors.push(`${n} : "answers" (liste de réponses acceptées) requis`);
   });
   return errors;
 }
@@ -98,7 +98,12 @@ function grade(quiz, answers = {}) {
  * (« Quel contenu fait partie du module X ? »), avec leurres pris dans les autres modules du cours.
  * Retourne null s'il n'y a pas assez de matière (aucun leurre) → validation par visionnage seul.
  */
-function autoQuiz(course, module) {
+const AUTO_TEXT = {
+  fr: (m) => `Quel contenu fait partie du module « ${m} » ?`,
+  en: (m) => `Which content belongs to the module "${m}"?`,
+  es: (m) => `¿Qué contenido forma parte del módulo «${m}»?`,
+};
+function autoQuiz(course, module, lang = 'fr') {
   const own = module.items.filter((i) => i.required).slice(0, 5);
   const decoys = course.modules.filter((m) => m.id !== module.id).flatMap((m) => m.items.filter((i) => i.required).map((i) => i.title));
   const ownTitles = new Set(module.items.map((i) => i.title));
@@ -108,7 +113,7 @@ function autoQuiz(course, module) {
   const questions = own.map((it, i) => {
     const wrong = shuffle(pool, rnd).slice(0, 3);
     const options = shuffle([it.title, ...wrong], rnd);
-    return { id: `auto${i + 1}`, type: 'mcq', text: `Quel contenu fait partie du module « ${module.title} » ?`, options, answer: [options.indexOf(it.title)], points: 1 };
+    return { id: `auto${i + 1}`, type: 'mcq', text: (AUTO_TEXT[lang] || AUTO_TEXT.fr)(module.title), options, answer: [options.indexOf(it.title)], points: 1 };
   });
   return { version: 1, title: `Révision — ${module.title}`, passingScore: null, questions, auto: true };
 }

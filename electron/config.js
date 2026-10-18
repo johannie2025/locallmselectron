@@ -2,27 +2,37 @@
 const fs = require('fs');
 const path = require('path');
 
-const DEFAULTS = { courseRoot: 'C:\\Formation_Langues', dataDir: null };
+const DEFAULTS = {
+  courseRoot: 'C:\\formations_wls',
+  dataDir: null,       // défaut : C:\ProgramData\WiseDesignLMS (partagé entre comptes Windows) ; userData en dev
+  kiosk: 'auto',       // 'auto' : kiosque pour les comptes Windows standard, fenêtre normale pour les admins Windows ; true / false pour forcer
+  lockdown: 'auto',    // 'auto' : restrictions Windows pour les comptes standard ; 'always' ; 'off'
+};
 
 /**
- * Ordre de recherche du fichier de config (lms-config.json) :
+ * Fichier de configuration facultatif lms-config.json, recherché dans l'ordre :
  *   1. variable d'environnement LMS_CONFIG
- *   2. à côté de l'exécutable (installé ou portable)
- * Exemple : { "courseRoot": "D:\\Cours", "dataDir": "C:\\ProgramData\\LMS_Langues" }
- * Le dossier des cours peut ensuite être modifié depuis le panneau Admin (stocké en base).
+ *   2. C:\ProgramData\WiseDesignLMS\lms-config.json
+ *   3. à côté de l'exécutable
+ * Exemple : { "courseRoot": "D:\\formations_wls", "kiosk": false, "lockdown": "off" }
  */
 function loadConfig(app) {
+  const programData = process.env.ProgramData || 'C:\\ProgramData';
   const candidates = [
     process.env.LMS_CONFIG,
-    process.env.PORTABLE_EXECUTABLE_DIR && path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'lms-config.json'),
+    path.join(programData, 'WiseDesignLMS', 'lms-config.json'),
     path.join(path.dirname(process.execPath), 'lms-config.json'),
   ].filter(Boolean);
   let cfg = {};
   for (const f of candidates) {
-    try { cfg = JSON.parse(fs.readFileSync(f, 'utf8')); break; } catch { /* suivant */ }
+    try { cfg = JSON.parse(fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, '')); break; } catch { /* suivant */ }
   }
   const merged = { ...DEFAULTS, ...cfg };
-  if (!merged.dataDir) merged.dataDir = app.getPath('userData');
+  if (!merged.dataDir) {
+    merged.dataDir = process.platform === 'win32' && app.isPackaged
+      ? path.join(programData, 'WiseDesignLMS')
+      : app.getPath('userData');
+  }
   return merged;
 }
 

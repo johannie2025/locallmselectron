@@ -69,3 +69,17 @@ test('auto-quiz : nécessite des leurres', () => {
   const q = autoQuiz(c, c.modules[1]);
   if (q) assert.ok(q.questions.every((x) => x.options.includes(c.modules[1].items.find((i) => i.required).title) || true));
 });
+
+test('gating : quiz.json invalide → seuil par défaut (régression : seuil `false`)', () => {
+  const root = makeTree();
+  fs.writeFileSync(path.join(root, 'Anglais_A1/Module_2_Verbes/quiz.json'), '{ pas du json');
+  const t = scanRoot(root);
+  const v = buildView(t, { progress: new Map(), quizBest: new Map(), settings: { minScore: 80, autoQuiz: true } });
+  const m2 = v.courses[0].modules[1];
+  assert.strictEqual(m2.quiz.passingScore, 80);
+  assert.strictEqual(m2.quiz.source, 'auto');
+  const m2full = t.courses[0].modules[1];
+  const progress = new Map(m2full.items.filter((i) => i.required).map((i) => [i.id, { percent: 100, completed: 1 }]));
+  const ok = buildView(t, { progress, quizBest: new Map([[m2full.id, { best: 10, attempts: 1 }]]), settings: { minScore: 80, autoQuiz: true } });
+  assert.strictEqual(ok.courses[0].modules[1].quiz.passed, false, '10 % ne doit pas valider un seuil de 80 %');
+});

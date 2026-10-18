@@ -1,83 +1,94 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, errText } from './api.js';
+import { api } from './api.js';
+import { useI18n, LangSwitch } from './i18n/index.jsx';
+import { useBrand } from './brand/BrandProvider.jsx';
+import BackgroundFX from './components/BackgroundFX.jsx';
+import Footer from './components/Footer.jsx';
+import About from './components/About.jsx';
+import LockScreen from './components/LockScreen.jsx';
+import { Login, ChangePassword } from './components/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Player from './pages/Player.jsx';
 import Quiz from './pages/Quiz.jsx';
-import Admin from './pages/Admin.jsx';
+import AdminDashboard from './pages/admin/AdminDashboard.jsx';
+import AdminPeople from './pages/admin/AdminPeople.jsx';
+import AdminContent from './pages/admin/AdminContent.jsx';
+import AdminReports from './pages/admin/AdminReports.jsx';
+import AdminSettings from './pages/admin/AdminSettings.jsx';
 
-function Login({ onLogin }) {
-  const [u, setU] = useState('');
-  const [p, setP] = useState('');
-  const [err, setErr] = useState('');
-  const submit = async (e) => {
-    e.preventDefault();
-    try { onLogin(await api('auth:login', u, p)); } catch (x) { setErr(errText(x)); }
-  };
-  return (
-    <div className="h-full grid place-items-center">
-      <form onSubmit={submit} className="card w-96 space-y-4">
-        <h1 className="text-2xl font-semibold">Centre de langues</h1>
-        <input className="input" placeholder="Identifiant" value={u} onChange={(e) => setU(e.target.value)} autoFocus />
-        <input className="input" type="password" placeholder="Mot de passe" value={p} onChange={(e) => setP(e.target.value)} />
-        {err && <p className="text-rose-400 text-sm">{err}</p>}
-        <button className="btn-primary w-full">Connexion</button>
-      </form>
-    </div>
-  );
-}
-
-function ChangePassword({ onDone }) {
-  const [o, setO] = useState('');
-  const [n, setN] = useState('');
-  const [err, setErr] = useState('');
-  const submit = async (e) => {
-    e.preventDefault();
-    try { onDone(await api('auth:changePassword', o, n)); } catch (x) { setErr(errText(x)); }
-  };
-  return (
-    <div className="h-full grid place-items-center">
-      <form onSubmit={submit} className="card w-96 space-y-4">
-        <h1 className="text-xl font-semibold">Choisissez un nouveau mot de passe</h1>
-        <input className="input" type="password" placeholder="Mot de passe actuel" value={o} onChange={(e) => setO(e.target.value)} />
-        <input className="input" type="password" placeholder="Nouveau mot de passe (≥ 6)" value={n} onChange={(e) => setN(e.target.value)} />
-        {err && <p className="text-rose-400 text-sm">{err}</p>}
-        <button className="btn-primary w-full">Valider</button>
-      </form>
-    </div>
-  );
-}
+const ADMIN_TABS = [['dash', 'admin.dash', '📊'], ['people', 'admin.people', '👥'], ['content', 'admin.content', '🗂️'], ['reports', 'admin.reports', '🎓'], ['settings', 'admin.settings', '⚙️']];
 
 export default function App() {
+  const { t, setLang } = useI18n();
+  const brand = useBrand();
+  const [lic, setLic] = useState(null);
   const [user, setUser] = useState(null);
   const [data, setData] = useState(null);
   const [page, setPage] = useState({ name: 'dashboard' });
 
-  const reload = useCallback(async () => { try { setData(await api('courses:list')); } catch { /* session perdue */ } }, []);
-  useEffect(() => { if (user && !user.mustChange) reload(); }, [user, reload]);
+  const refreshLic = useCallback(() => api('license:status').then(setLic).catch(() => {}), []);
+  useEffect(() => { refreshLic(); const x = setInterval(refreshLic, 60000); return () => clearInterval(x); }, [refreshLic]);
+
+  const reload = useCallback(async () => { try { setData(await api('courses:list')); } catch { /* session perdue ou licence expirée */ } }, []);
+  useEffect(() => { if (user && !user.mustChange && !lic?.locked) reload(); }, [user, lic?.locked, reload]);
   useEffect(() => window.lms.onCoursesChanged(reload), [reload]);
 
-  const logout = async () => { await api('auth:logout'); setUser(null); setData(null); setPage({ name: 'dashboard' }); };
-  const go = (p) => { setPage(p); if (p.name === 'dashboard') reload(); };
+  // Licence expirée en cours de session : retour immédiat à l'écran de verrouillage
+  useEffect(() => { if (lic?.locked && user) { api('auth:logout').catch(() => {}); setUser(null); setData(null); } }, [lic?.locked, user]);
 
-  if (!user) return <Login onLogin={setUser} />;
+  const login = (u) => { if (u.lang) setLang(u.lang); setUser(u); setPage({ name: u.role === 'admin' ? 'admin' : 'dashboard', tab: 'dash' }); };
+  const logout = async () => { await api('auth:logout').catch(() => {}); setUser(null); setData(null); setPage({ name: 'dashboard' }); };
+  const go = (p) => { setPage(p); if (p.name === 'dashboard') reload(); };
+  const onLang = (code) => { if (user) api('auth:setLang', code).catch(() => {}); };
+
+  if (!lic) return <div className="h-full grid place-items-center text-slate-300">{t('common.loading')}</div>;
+  if (lic.locked) return <LockScreen lic={lic} onActivated={refreshLic} />;
+  if (!user) return <Login onLogin={login} />;
   if (user.mustChange) return <ChangePassword onDone={setUser} />;
 
+  const isAdmin = user.role === 'admin';
+  const banner = lic.state === 'trial' ? t('lic.trialBanner', { n: lic.daysLeft }) : (isAdmin && lic.daysLeft != null && lic.daysLeft <= 14 ? t('lic.banner', { n: lic.daysLeft }) : null);
+  const inAdmin = page.name === 'admin';
+
   return (
-    <div className="h-full flex flex-col">
-      <header className="flex items-center justify-between px-6 py-3 bg-slate-800 border-b border-slate-700">
-        <button className="text-lg font-semibold" onClick={() => go({ name: 'dashboard' })}>📚 LMS Langues</button>
-        <div className="flex items-center gap-3 text-sm">
-          <span>{user.fullName || user.username}</span>
-          {user.role === 'admin' && <button className="btn-ghost" onClick={() => go({ name: 'admin' })}>Administration</button>}
-          <button className="btn-ghost" onClick={logout}>Déconnexion</button>
+    <div className="h-full flex flex-col relative">
+      <BackgroundFX image={brand.appBg} calm />
+      <header className="relative z-10 flex flex-wrap items-center gap-3 px-5 py-2.5 bg-slate-900/80 backdrop-blur border-b border-white/10 no-print">
+        <button className="flex items-center gap-3" onClick={() => go({ name: isAdmin ? 'admin' : 'dashboard', tab: 'dash' })}>
+          <span className="logo-badge !p-1"><img src={brand.logoSrc} alt="" className="h-9 w-auto max-w-[8rem] object-contain" /></span>
+          <span className="text-lg font-semibold hidden md:inline">{brand.name}</span>
+        </button>
+        {isAdmin && (
+          <nav className="flex flex-wrap gap-1.5 ml-2">
+            <button className={page.name === 'dashboard' ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'} onClick={() => go({ name: 'dashboard' })}>📚 {t('admin.preview')}</button>
+            {ADMIN_TABS.map(([id, key, icon]) => (
+              <button key={id} className={inAdmin && page.tab === id ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'} onClick={() => go({ name: 'admin', tab: id })}>{icon} {t(key)}</button>
+            ))}
+          </nav>
+        )}
+        <div className="ml-auto flex items-center gap-2 text-sm">
+          <span className="hidden lg:inline text-slate-300">{user.fullName || user.username}</span>
+          <LangSwitch onChange={onLang} />
+          <About />
+          <button className="btn-ghost btn-sm" onClick={logout}>{t('app.logout')}</button>
         </div>
       </header>
-      <main className="flex-1 overflow-auto">
-        {page.name === 'dashboard' && <Dashboard data={data} go={go} />}
+      {banner && <div className="relative z-10 bg-amber-500/90 text-slate-900 text-sm font-medium text-center py-1 no-print">{banner}</div>}
+      <main className="relative z-10 flex-1 min-h-0 overflow-auto">
+        {page.name === 'dashboard' && <Dashboard data={data} go={go} user={user} />}
         {page.name === 'player' && <Player item={page.item} module={page.module} data={data} go={go} />}
         {page.name === 'quiz' && <Quiz moduleId={page.moduleId} go={go} />}
-        {page.name === 'admin' && <Admin go={go} />}
+        {inAdmin && (
+          <div className="p-6 max-w-7xl mx-auto">
+            {page.tab === 'dash' && <AdminDashboard />}
+            {page.tab === 'people' && <AdminPeople />}
+            {page.tab === 'content' && <AdminContent />}
+            {page.tab === 'reports' && <AdminReports />}
+            {page.tab === 'settings' && <AdminSettings lic={lic} onLicense={refreshLic} />}
+          </div>
+        )}
       </main>
+      <Footer />
     </div>
   );
 }

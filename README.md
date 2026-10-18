@@ -1,44 +1,24 @@
-# LMS Langues — hors-ligne / kiosque Windows
+# Wise Design Learning Systems
 
-Electron 32 · React 18 · Tailwind · SQLite (better-sqlite3) · bcryptjs.
+LMS 100 % hors-ligne pour centres de formation en langues (Electron + React/Tailwind + SQLite).
+Conçu et intégré par **Wise Design — Intégrateur et Solutions & Automatisation IA** · WhatsApp +240 555 593 398 / +240 555 445 514.
 
-## Arborescence
-```
-.github/workflows/build.yml   CI : tests + installeur Windows (.exe)
-electron/
-  main.js          kiosque, raccourcis, protocoles, blocage réseau
-  preload.js       pont sécurisé (liste blanche de canaux)
-  ipc.js           services : auth, cours, progression, quiz, admin
-  courseScanner.js scanner récursif autonome (Node pur)
-  quizEngine.js    validation / correction / auto-quiz
-  gating.js        règles de déblocage
-  db.js, schema.sql, config.js
-src/               interface React (login, cours, lecteur vidéo/PDF, quiz, admin)
-docs/              quiz.schema.json, FRONTFACE.md
-tests/             node --test
-```
+## Fonctions
+- Scan du dossier `C:\formations_wls` : formation > module > mp4/webm/mp3/pdf/pptx, `manifest.json` et `quiz.json` optionnels.
+- Progression automatique ; module N+1 verrouillé tant que N n'est pas vu à 100 % et le test ≥ 80 % (seuil réglable).
+- Rôles Étudiant / Formateur-Admin (bcrypt). Premier accès : `admin` / `Admin@1234` (changement de mot de passe obligatoire).
+- Classes, inscriptions d'un étudiant à une ou plusieurs formations, ordre des modules modifiable.
+- Éditeur de quiz par formulaire (QCM, vrai/faux, texte à trous) enregistré automatiquement en JSON.
+- Tableau de bord (effectifs par classe, progression, certificats, graphiques), relevés de notes et certificats imprimables / PDF.
+- Application trilingue FR / EN / ES, personnalisation du centre (logo, nom, couleurs tirées du logo).
+- Lecteur sans bouton de téléchargement ; bouton « Présentation » avec contacts Wise Design.
+- Licence par poste (mensuelle / trimestrielle / semestrielle / annuelle), liée à l'identifiant matériel : voir `docs/LICENCES.md`.
+- Mode kiosque Windows : démarrage automatique, USB bloqué, explorateur/raccourcis bloqués : voir `docs/POSTE-WINDOWS.md`.
 
-## Contenu des cours
-```
-C:\Formation_Langues\
-  Anglais_Niveau_A1\
-    Module_01_Grammaire\   cours.mp4, fiche.pdf, quiz.json, manifest.json (facultatifs)
-    Module_02_Vocabulaire\
-```
-- `.pptx` : non affichable hors-ligne ; déposez un `.pdf` du même nom à côté (il remplace le .pptx).
-- `manifest.json` (cours ou module) : `{ "title", "description", "order", "prerequisites": ["Module_01_Grammaire"], "minScore", "items": ["a.mp4","b.pdf"] }`.
-- `quiz.json` : voir `docs/quiz.schema.json` (QCM `mcq`, `true_false`, `fill_blank`). L'éditeur Admin fournit un modèle.
+## Construire avec GitHub Actions
+1. Créer un dépôt GitHub, y déposer le contenu de ce zip (sans clé privée), pousser sur `main`.
+2. L'action **Build Windows** lance les tests puis produit l'installeur `.exe` (artefact « Wise-Design-Learning-Systems-windows »).
+3. Pour une Release publique : `git tag v1.2.0 && git push --tags`.
 
-## Développement / build
-```
-npm install
-npm run dev     # mode fenêtré (LMS_NO_KIOSK=1)
-npm test
-npm run dist    # nécessite Windows
-```
-Sur GitHub : poussez sur `main` → onglet **Actions** → artefact `LMS-Langues-windows`. Un tag `v1.0.0` crée aussi une Release.
-
-## Notes de production
-- Base SQLite **non chiffrée** : mots de passe en bcrypt ; pour chiffrer le fichier, utilisez BitLocker/ACL NTFS ou remplacez par `better-sqlite3-multiple-ciphers`.
-- Installeur non signé → avertissement SmartScreen ; signez avec un certificat de code si besoin.
-- Le correcteur de quiz tourne dans le processus principal (le renderer ne reçoit jamais les réponses).
+## Développement
+`npm install`, `npm test`, `npm run dev`, `npm run dist`.

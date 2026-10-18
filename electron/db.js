@@ -4,7 +4,8 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 
-const SCHEMA_VERSION = 1;
+// v1 = schema.sql, v2 = schema_v2.sql, … (suivi via PRAGMA user_version)
+const MIGRATIONS = ['schema.sql', 'schema_v2.sql'];
 
 function openDb(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -18,17 +19,18 @@ function openDb(file) {
 
 function migrate(db) {
   let v = db.pragma('user_version', { simple: true });
-  if (v >= SCHEMA_VERSION) return;
-  // v1 = schema.sql ; futures migrations : ajouter schema_v2.sql, etc.
-  const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-  db.exec('BEGIN');
-  try {
-    if (v < 1) db.exec(sql);
-    db.pragma(`user_version = ${SCHEMA_VERSION}`);
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
+  while (v < MIGRATIONS.length) {
+    const sql = fs.readFileSync(path.join(__dirname, MIGRATIONS[v]), 'utf8');
+    db.exec('BEGIN');
+    try {
+      db.exec(sql);
+      v += 1;
+      db.pragma(`user_version = ${v}`);
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
   }
 }
 

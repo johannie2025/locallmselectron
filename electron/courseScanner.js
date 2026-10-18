@@ -18,6 +18,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const VIDEO_EXT = new Set(['.mp4', '.webm', '.m4v']);
+const AUDIO_EXT = new Set(['.mp3', '.wav', '.ogg', '.oga', '.m4a', '.aac', '.opus']);
 const PDF_EXT = new Set(['.pdf']);
 const PPT_EXT = new Set(['.pptx', '.ppt']);
 const IGNORED = /^(\.|~\$|thumbs\.db$|desktop\.ini$|\$recycle)/i;
@@ -66,6 +67,7 @@ function buildItems(moduleDir, root, manifest, warnings) {
     const ext = path.extname(abs).toLowerCase();
     let type = null;
     if (VIDEO_EXT.has(ext)) type = 'video';
+    else if (AUDIO_EXT.has(ext)) type = 'audio';
     else if (PDF_EXT.has(ext)) type = 'pdf';
     else if (PPT_EXT.has(ext)) type = 'pptx';
     if (!type) continue;
@@ -147,8 +149,7 @@ function scanCourse(courseDir, root, warnings) {
   const modules = [];
 
   // fichiers à la racine du cours → module « Général » (non récursif : les sous-dossiers sont des modules)
-  const looseFiles = entries.filter((e) => e.isFile() && (VIDEO_EXT.has(path.extname(e.name).toLowerCase()) ||
-    PDF_EXT.has(path.extname(e.name).toLowerCase()) || PPT_EXT.has(path.extname(e.name).toLowerCase())));
+  const looseFiles = entries.filter((e) => e.isFile() && [VIDEO_EXT, AUDIO_EXT, PDF_EXT, PPT_EXT].some((s) => s.has(path.extname(e.name).toLowerCase())));
   if (looseFiles.length) {
     const items = buildItems(courseDir, root, null, warnings).filter((it) => !it.relPath.slice(id.length + 1).includes('/'));
     if (items.length) {
@@ -210,7 +211,8 @@ function scanRoot(rootPath) {
   return { root, scannedAt: Date.now(), courses, warnings, fingerprint: hash.digest('hex') };
 }
 
-module.exports = { scanRoot, naturalCompare, prettify, VIDEO_EXT, PDF_EXT, PPT_EXT };
+const MEDIA_EXT = new Set([...VIDEO_EXT, ...AUDIO_EXT, ...PDF_EXT]); // extensions servies à l'interface (pptx exclu)
+module.exports = { scanRoot, naturalCompare, prettify, VIDEO_EXT, AUDIO_EXT, PDF_EXT, PPT_EXT, MEDIA_EXT };
 
 // Utilisation CLI : node electron/courseScanner.js "C:\Formation_Langues"
 if (require.main === module) {

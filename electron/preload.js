@@ -2,13 +2,23 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 // Liste blanche stricte : le renderer ne peut appeler que ces canaux.
+// (tests/consistency.test.js vérifie qu'elle correspond exactement aux handlers de ipc.js)
 const CHANNELS = new Set([
-  'auth:login', 'auth:logout', 'auth:me', 'auth:changePassword',
+  'auth:login', 'auth:logout', 'auth:me', 'auth:changePassword', 'auth:setLang', 'auth:adminExit',
+  'branding:get', 'license:status', 'license:activate',
   'courses:list', 'courses:rescan', 'progress:update', 'media:readPdf',
-  'quiz:get', 'quiz:submit',
-  'admin:users:list', 'admin:users:create', 'admin:users:resetPassword', 'admin:users:setActive',
-  'admin:users:resetProgress', 'admin:users:delete', 'admin:results:list', 'admin:results:export',
-  'admin:settings:get', 'admin:settings:set', 'admin:quiz:read', 'admin:quiz:save', 'admin:modules:list', 'admin:exit',
+  'quiz:get', 'quiz:submit', 'cert:get', 'print:page', 'print:pdf',
+  'admin:users:list', 'admin:users:create', 'admin:users:update', 'admin:users:resetPassword', 'admin:users:setActive',
+  'admin:users:resetProgress', 'admin:users:delete',
+  'admin:classes:list', 'admin:classes:save', 'admin:classes:delete',
+  'admin:courses:meta', 'admin:enroll:getUser', 'admin:enroll:setUser', 'admin:enroll:getCourse', 'admin:enroll:setCourse',
+  'admin:order:get', 'admin:order:save',
+  'admin:modules:list', 'admin:quiz:read', 'admin:quiz:save',
+  'admin:stats:overview', 'admin:report:transcript', 'admin:report:certificate',
+  'admin:results:list', 'admin:results:export',
+  'admin:settings:get', 'admin:settings:set',
+  'admin:branding:set', 'admin:branding:saveLogo', 'admin:branding:removeLogo',
+  'admin:exit',
 ]);
 
 contextBridge.exposeInMainWorld('lms', {
