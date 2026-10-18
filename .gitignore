@@ -1,0 +1,7 @@
+node_modules/
+dist/
+release/
+*.log
+# Clé privée de licences : ne JAMAIS la committer
+tools/keys/
+*.pem
