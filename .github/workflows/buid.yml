@@ -1,4 +1,4 @@
-name: Build Windows (WISE LMS)
+name: Build Windows (Wise Design Learning Systems)
 
 on:
   push:
@@ -33,7 +33,7 @@ jobs:
       - name: Publier les artefacts
         uses: actions/upload-artifact@v4
         with:
-          name: LMS-Wise-windows
+          name: Wise-Design-Learning-Systems-windows
           path: |
             release/*.exe
           if-no-files-found: error
