@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22   # les tests utilisent node:sqlite (Node ≥ 22.13)
 
       - name: Installer les dépendances (rebuild natif better-sqlite3 pour Electron via postinstall)
         run: npm install --no-audit --no-fund
