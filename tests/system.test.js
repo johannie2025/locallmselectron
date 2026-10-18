@@ -1,0 +1,79 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { handlers } = require('./_shims');
+const { openDb } = require('../electron/db');
+const license = require('../electron/license');
+const { loadConfig } = require('../electron/config');
+
+const root = path.join(__dirname, '..');
+const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
+
+test('version portable : données et cours à côté de l\'exécutable, ni kiosque ni restrictions par défaut, config surchargeable', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wls-portable-'));
+  const app = { isPackaged: true, getPath: () => path.join(dir, 'userData') };
+  const saved = { P: process.env.PORTABLE_EXECUTABLE_DIR, C: process.env.LMS_CONFIG };
+  try {
+    process.env.PORTABLE_EXECUTABLE_DIR = dir; delete process.env.LMS_CONFIG;
+    let c = loadConfig(app);
+    assert.strictEqual(c.portable, true);
+    assert.strictEqual(c.dataDir, path.join(dir, 'WLS-Data'));
+    assert.strictEqual(c.courseRoot, path.join(dir, 'formations_wls'));
+    assert.strictEqual(c.kiosk, false); assert.strictEqual(c.lockdown, 'off');
+    fs.writeFileSync(path.join(dir, 'lms-config.json'), JSON.stringify({ kiosk: true, courseRoot: 'D:\\cours' }));
+    c = loadConfig(app);
+    assert.strictEqual(c.kiosk, true); assert.strictEqual(c.courseRoot, 'D:\\cours'); assert.strictEqual(c.lockdown, 'off');
+    fs.unlinkSync(path.join(dir, 'lms-config.json'));
+    delete process.env.PORTABLE_EXECUTABLE_DIR;
+    c = loadConfig(app);
+    assert.strictEqual(c.portable, false); assert.strictEqual(c.kiosk, 'auto'); assert.strictEqual(c.courseRoot, 'C:\\formations_wls');
+  } finally {
+    for (const [k, v] of [['PORTABLE_EXECUTABLE_DIR', saved.P], ['LMS_CONFIG', saved.C]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
+test('alimentation : seules 3 actions, utilisables même quand la licence est verrouillée (écran de verrouillage)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wls-'));
+  const root2 = path.join(dir, 'f'); fs.mkdirSync(root2);
+  const db = openDb(path.join(dir, 'a.db'));
+  license.machineInfo = () => ({ ok: true, id: 'AAAA-BBBB-CCCC-DDDD-EEEE', strength: 'hardware' });
+  license.evaluate = () => ({ state: 'expired', locked: true });
+  handlers.clear();
+  const calls = [];
+  const svc = require('../electron/ipc').createServices({
+    db, config: { courseRoot: root2, dataDir: dir }, getWindow: () => null, quitApp() {}, setOnTop() {}, log() {},
+    sysInfo: () => ({ platform: 'win32', shell: true, kiosk: true, portable: false, winUser: 'eleve01' }), power: (a) => { calls.push(a); return true; },
+  });
+  test.after(() => svc.stop());
+  const call = (ch, ...a) => handlers.get(ch)({}, ...a);
+  assert.deepStrictEqual((await call('system:info')).data.shell, true);
+  for (const a of ['logoff', 'restart', 'shutdown']) assert.ok((await call('system:power', a)).ok, a);
+  for (const bad of ['', 'hibernate', 'logoff; calc', null, '../../x']) assert.strictEqual((await call('system:power', bad)).error, 'BAD_ACTION', String(bad));
+  assert.deepStrictEqual(calls, ['logoff', 'restart', 'shutdown']);
+  assert.strictEqual((await call('courses:list')).error, 'LICENSE_LOCKED', 'le reste reste verrouillé');
+});
+
+test('paquets Windows : cibles installeur + portable, scripts cybercafé cohérents avec main.js', () => {
+  const pkg = JSON.parse(read('package.json'));
+  assert.deepStrictEqual(pkg.build.win.target.map((t) => t.target).sort(), ['nsis', 'portable']);
+  assert.match(pkg.build.portable.artifactName, /Portable/);
+  assert.ok(pkg.build.extraResources.some((r) => r.from === 'scripts' && r.to === 'scripts'));
+  const main = read('electron/main.js');
+  assert.match(main, /process\.argv\.includes\('--shell'\)/);
+  const ps = read('scripts/Comptes-Windows.ps1');
+  assert.ok(ps.includes('--shell'), 'le script pose le même argument que celui que lit main.js');
+  assert.ok(ps.includes('Winlogon') && ps.includes("'Shell'"));
+  assert.ok(ps.includes('S-1-5-32-544'), 'refus des comptes administrateurs');
+  for (const f of ['scripts/Comptes-Windows.ps1', 'scripts/Mode-Cybercafe.cmd']) assert.ok(!/[^\x00-\x7f]/.test(read(f)), `${f} doit rester en ASCII (PowerShell 5.1 / cmd)`);
+  const nsh = read('build/installer.nsh');
+  assert.ok(nsh.includes('resources\\scripts\\Mode-Cybercafe.cmd'));
+  assert.ok(fs.existsSync(path.join(root, 'scripts', 'Mode-Cybercafe.cmd')));
+  // en mode shell : quitter = fermer la session, maintenance = ouvrir explorer.exe
+  assert.ok(main.includes("spawn('explorer.exe'") && main.includes("['/l']"));
+  // l'extinction ne doit pas être bloquée par la fermeture annulée du kiosque
+  assert.match(main, /power: \(action\) => \{[\s\S]*allowQuit = true/);
+  assert.match(main, /session-end/);
+});

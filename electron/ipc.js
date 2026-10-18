@@ -1,5 +1,6 @@
 'use strict';
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { ipcMain } = require('electron');
 const bcrypt = require('bcryptjs');
@@ -8,6 +9,9 @@ const { buildView } = require('./gating');
 const quizEngine = require('./quizEngine');
 const license = require('./license');
 const clockGuard = require('./clockGuard');
+const appCatalog = require('./appCatalog');
+const { spawn: nodeSpawn } = require('child_process');
+const { AsyncLocalStorage } = require('async_hooks');
 
 const clamp = (n, a, b) => Math.max(a, Math.min(b, Number(n) || 0));
 const toPosix = (p) => p.split(path.sep).join('/');
@@ -21,7 +25,14 @@ const LANGS = new Set(['fr', 'en', 'es']);
 const HEX = /^#[0-9a-f]{6}$/i;
 const IMG_EXT = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };
 // Canaux utilisables même quand la licence est expirée (écran de verrouillage)
-const LICENSE_OPEN = new Set(['license:status', 'license:activate', 'auth:adminExit', 'branding:get', 'auth:me', 'auth:logout']);
+const LICENSE_OPEN = new Set(['net:verifyAdmin', 'license:status', 'license:activate', 'license:issueHere', 'system:info', 'system:power', 'auth:adminExit', 'branding:get', 'auth:me', 'auth:logout']);
+// Canaux qui concernent CE poste (jamais transmis au serveur, jamais appelables à distance) : licence du poste, applications installées,
+// alimentation, impression, sortie du kiosque, configuration réseau.
+const LOCAL_ONLY = new Set([
+  'license:status', 'license:activate', 'license:issueHere', 'license:issue', 'system:info', 'system:power',
+  'apps:list', 'apps:launch', 'admin:apps:get', 'admin:apps:save', 'print:page', 'print:pdf', 'auth:adminExit', 'admin:exit',
+  'net:getConfig', 'net:setMode', 'net:newPairCode', 'net:revokeClient', 'net:pair', 'net:restart',
+]);
 const CSV_HEAD = {
   fr: ['Date', 'Utilisateur', 'Nom', 'Classe', 'Cours', 'Module', 'Score (%)', 'Réussi', 'Durée (s)'],
   en: ['Date', 'Username', 'Name', 'Class', 'Course', 'Module', 'Score (%)', 'Passed', 'Duration (s)'],
@@ -29,8 +40,14 @@ const CSV_HEAD = {
 };
 const YES = { fr: ['oui', 'non'], en: ['yes', 'no'], es: ['sí', 'no'] };
 
-function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
-  let session = null; // une seule session à la fois (poste kiosque)
+function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExternalApp = () => {}, sysInfo = () => ({ platform: process.platform }), power = () => false, net = {}, spawn = nodeSpawn, exists = fs.existsSync, platform = process.platform }) {
+  const netClient = net.client || null; // mode client : les canaux de données sont transmis au serveur
+  let treeVersion = 1;
+  // Session : poste local = une seule session à la fois ; serveur réseau = un « holder » par poste client (AsyncLocalStorage)
+  const als = new AsyncLocalStorage();
+  const localHolder = { session: null };
+  const H = () => als.getStore() || localHolder;
+  const cur = () => H().session;
   let tree = null;
   let watcher = null;
   let watchedRoot = null;
@@ -109,7 +126,7 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
     try {
       watcher = fs.watch(root, { recursive: true }, () => {
         clearTimeout(timer);
-        timer = setTimeout(() => { tree = null; getWindow()?.webContents.send('courses:changed'); }, 1500);
+        timer = setTimeout(() => { tree = null; treeVersion += 1; getWindow()?.webContents.send('courses:changed'); }, 1500);
       });
       watcher.on('error', () => { watcher = null; });
     } catch (e) { log(`watch: ${e.message}`); }
@@ -150,11 +167,11 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
   }
 
   function currentView() {
-    const v = viewFor(session.id, session.role === 'admin');
+    const v = viewFor(cur().id, isStaff(cur().role));
     const t = getTree();
-    const certs = new Map(db.prepare('SELECT course_id, number, issued_at FROM certificates WHERE user_id=?').all(session.id).map((r) => [r.course_id, r]));
+    const certs = new Map(db.prepare('SELECT course_id, number, issued_at FROM certificates WHERE user_id=?').all(cur().id).map((r) => [r.course_id, r]));
     v.courses.forEach((c) => { const x = certs.get(c.id); c.certificate = x ? { number: x.number, issuedAt: x.issued_at } : null; });
-    return { ...v, error: t.error || null, stale: !!t.stale, scannedAt: t.scannedAt, warnings: session.role === 'admin' ? t.warnings || [] : [], settings: { allowSkip: getSettings().allowSkip } };
+    return { ...v, error: t.error || null, stale: !!t.stale, scannedAt: t.scannedAt, warnings: isStaff(cur().role) ? t.warnings || [] : [], settings: { allowSkip: getSettings().allowSkip } };
   }
   function moduleState(moduleId) {
     const v = currentView();
@@ -164,13 +181,13 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
 
   /** Résolution SÉCURISÉE d'un média : reste dans la racine, extension autorisée, cours autorisé pour l'étudiant. */
   function resolveMedia(rel) {
-    if (!session || licenseInfo().locked) return null;
+    if (!cur() || licenseInfo().locked) return null;
     const root = getCourseRoot();
     const abs = path.resolve(root, rel);
     const r = path.relative(root, abs);
     if (!r || r.startsWith('..') || path.isAbsolute(r)) return null;
     if (!MEDIA_EXT.has(path.extname(abs).toLowerCase())) return null;
-    if (session.role !== 'admin' && !allowedCourseIds(session.id).has(toPosix(r).split('/')[0])) return null;
+    if (!isStaff(cur().role) && !allowedCourseIds(cur().id).has(toPosix(r).split('/')[0])) return null;
     try { if (!fs.statSync(abs).isFile()) return null; } catch { return null; }
     return abs;
   }
@@ -267,21 +284,79 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
   }
 
   // ---------- Enregistrement des handlers ----------
+  // Profils : superadmin (Wise Design) > admin (centre) > trainer (formateur du centre) > student
+  const RANK = { student: 0, trainer: 1, admin: 2, superadmin: 3 };
+  const isStaff = (r) => RANK[r] >= 1;
+  const isManager = (r) => RANK[r] >= 2;
+  /** Rôles qu'un profil peut créer / attribuer : toujours inférieurs au sien (le superadmin peut créer un autre superadmin). */
+  const grantable = (r) => (r === 'superadmin' ? ['student', 'trainer', 'admin', 'superadmin'] : Object.keys(RANK).filter((k) => RANK[k] < RANK[r]));
+  /** Cible modifiable par la session : rôle strictement inférieur (superadmin : tous). */
+  function manageable(id) {
+    const u = db.prepare('SELECT id,role FROM users WHERE id=?').get(id);
+    if (!u) throw new Error('NOT_FOUND');
+    if (cur().role !== 'superadmin' && RANK[u.role] >= RANK[cur().role]) throw new Error('FORBIDDEN');
+    return u;
+  }
   const publicUser = (u) => ({ id: u.id, username: u.username, role: u.role, fullName: u.full_name || '', mustChange: !!u.must_change_password, lang: u.lang || null });
   const dec = (v) => (v == null ? null : v);
-  function handle(channel, role, fn) {
-    ipcMain.handle(channel, async (_e, ...args) => {
-      try {
-        if (!LICENSE_OPEN.has(channel) && licenseInfo().locked) throw new Error('LICENSE_LOCKED');
-        if (role && !session) throw new Error('AUTH_REQUIRED');
-        if (role === 'admin' && session.role !== 'admin') throw new Error('FORBIDDEN');
-        return { ok: true, data: await fn(...args) };
-      } catch (err) {
-        if (!/^[A-Z_]+$/.test(err.message)) log(`${channel}: ${err.stack || err.message}`);
-        return { ok: false, error: err.message };
+  const registry = new Map(); // canal → { role, fn }
+  /**
+   * Exécute un canal. holder = null : appel local (interface de ce poste) ; sinon appel d'un poste client via le serveur réseau
+   * (session propre au client). En mode client, les canaux de données sont transmis au serveur ; les canaux « poste » restent locaux
+   * et s'appuient alors sur l'identité connue du serveur (auth:me).
+   */
+  async function invoke(channel, args, holder = null) {
+    try {
+      const reg = registry.get(channel);
+      if (!reg) throw new Error('NOT_FOUND');
+      if (holder && LOCAL_ONLY.has(channel)) throw new Error('FORBIDDEN');
+      if (!LICENSE_OPEN.has(channel) && licenseInfo().locked) throw new Error('LICENSE_LOCKED');
+      let h = holder || localHolder;
+      if (netClient && !holder) {
+        if (!LOCAL_ONLY.has(channel)) return await netClient.call(channel, args);
+        h = { session: null };
+        if (reg.role) { const me = await netClient.call('auth:me'); h = { session: me.ok ? me.data : null }; }
       }
-    });
+      return await als.run(h, async () => {
+        if (reg.role && !cur()) throw new Error('AUTH_REQUIRED');
+        if (reg.role === 'staff' && !isStaff(cur().role)) throw new Error('FORBIDDEN');
+        if (reg.role === 'manager' && !isManager(cur().role)) throw new Error('FORBIDDEN');
+        if (reg.role === 'super' && cur().role !== 'superadmin') throw new Error('FORBIDDEN');
+        return { ok: true, data: await reg.fn(...args) };
+      });
+    } catch (err) {
+      if (!/^[A-Z_]+$/.test(err.message)) log(`${channel}: ${err.stack || err.message}`);
+      return { ok: false, error: err.message };
+    }
   }
+  function handle(channel, role, fn) {
+    registry.set(channel, { role, fn });
+    ipcMain.handle(channel, (_e, ...args) => invoke(channel, args));
+  }
+
+  /**
+   * Vérifie les identifiants d'un compte d'administration. En mode client c'est le SERVEUR qui vérifie ; s'il est injoignable,
+   * seul le super-administrateur LOCAL de ce poste (mot de passe changé à l'installation) peut encore faire sortir le kiosque.
+   */
+  async function checkAdminCreds(username, password, roles) {
+    username = String(username || '').trim();
+    if (netClient) {
+      const r = await netClient.call('net:verifyAdmin', [username, password]);
+      if (r.ok) { if (!roles.includes(r.data.role)) throw new Error('BAD_CREDENTIALS'); return r.data.role; }
+      if (r.error !== 'SERVER_UNREACHABLE') throw new Error(r.error);
+      roles = ['superadmin'];
+    }
+    const key = 'exit:' + username.toLowerCase();
+    guard(key);
+    const marks = roles.map(() => '?').join(',');
+    const u = db.prepare(`SELECT * FROM users WHERE username=? AND role IN (${marks}) AND active=1`).get(username, ...roles);
+    const ok = bcrypt.compareSync(String(password || ''), u ? u.password_hash : DUMMY_HASH);
+    if (!u || !ok) { fail(key); throw new Error('BAD_CREDENTIALS'); }
+    pass(key);
+    return u.role;
+  }
+  // Appelé par les postes clients (jamais par l'interface) : vérification d'un compte admin/superadmin du serveur
+  handle('net:verifyAdmin', null, async (username, password) => ({ role: await checkAdminCreds(username, password, ['admin', 'superadmin']) }));
 
   // Auth
   handle('auth:login', null, (username, password) => {
@@ -292,32 +367,71 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
     if (!u || !ok) { fail(key); throw new Error('BAD_CREDENTIALS'); }
     pass(key);
     db.prepare('UPDATE users SET last_login_at=? WHERE id=?').run(Date.now(), u.id);
-    session = publicUser(u);
-    return session;
+    H().session = publicUser(u);
+    return H().session;
   });
-  handle('auth:logout', null, () => { session = null; return true; });
-  handle('auth:me', null, () => session);
+  handle('auth:logout', null, () => { H().session = null; return true; });
+  handle('auth:me', null, () => cur());
   handle('auth:changePassword', 'user', (oldPwd, newPwd) => {
-    const u = db.prepare('SELECT * FROM users WHERE id=?').get(session.id);
+    const u = db.prepare('SELECT * FROM users WHERE id=?').get(cur().id);
     if (!bcrypt.compareSync(String(oldPwd || ''), u.password_hash)) throw new Error('BAD_CREDENTIALS');
     if (String(newPwd || '').length < 6) throw new Error('PASSWORD_TOO_SHORT');
     db.prepare('UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?').run(bcrypt.hashSync(newPwd, 10), u.id);
-    session.mustChange = false;
-    return session;
+    cur().mustChange = false;
+    return cur();
   });
   handle('auth:setLang', 'user', (lang) => {
     if (!LANGS.has(lang)) throw new Error('BAD_LANG');
-    db.prepare('UPDATE users SET lang=? WHERE id=?').run(lang, session.id); session.lang = lang; return true;
+    db.prepare('UPDATE users SET lang=? WHERE id=?').run(lang, cur().id); cur().lang = lang; return true;
   });
   // Sortie contrôlée depuis l'écran de connexion / de licence : identifiants admin requis
-  handle('auth:adminExit', null, (username, password, maintenance) => {
-    const key = 'exit:' + String(username || '').trim().toLowerCase();
-    guard(key);
-    const u = db.prepare("SELECT * FROM users WHERE username=? AND role='admin' AND active=1").get(String(username || '').trim());
-    const ok = bcrypt.compareSync(String(password || ''), u ? u.password_hash : DUMMY_HASH);
-    if (!u || !ok) { fail(key); throw new Error('BAD_CREDENTIALS'); }
-    pass(key);
-    quitApp(!!maintenance); return true;
+  handle('auth:adminExit', null, async (username, password, maintenance) => {
+    const role = await checkAdminCreds(username, password, ['admin', 'superadmin']);
+    quitApp(role === 'superadmin' && !!maintenance); return true; // le mode maintenance est réservé à Wise Design
+  });
+
+  // ---------- Réseau local : serveur / clients ----------
+  const localAddresses = () => Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address);
+  const netStore = net.store || { get: () => ({ mode: 'standalone', port: 47800, clients: [], server: '', token: '', name: '', pairHash: null, pairExpires: 0 }), update() {}, newPairCode() { throw new Error('NET_NOT_SERVER'); }, revoke() {} };
+  const netView = () => {
+    const c = netStore.get();
+    return {
+      mode: netClient ? 'client' : c.mode, configuredMode: c.mode, port: c.port, name: c.name, serverAddr: c.server, paired: !!c.token,
+      clients: c.clients.map(({ id, name, pairedAt, lastSeen, addr }) => ({ id, name, pairedAt, lastSeen, addr })),
+      pairActive: !!c.pairHash && Date.now() < c.pairExpires, pairExpires: c.pairExpires,
+      addresses: localAddresses(), listening: net.serverStatus ? net.serverStatus() : null,
+    };
+  };
+  handle('net:getConfig', 'super', () => netView());
+  handle('net:setMode', 'super', ({ mode, port, name } = {}) => {
+    if (!['standalone', 'server'].includes(mode)) throw new Error('BAD_MODE'); // le mode client s'obtient par jumelage
+    const p = port === undefined || port === '' ? netStore.get().port : Number(port);
+    if (!Number.isInteger(p) || p < 1024 || p > 65535) throw new Error('BAD_PORT');
+    netStore.update(mode === 'server'
+      ? { mode, port: p, name: String(name || '').slice(0, 40) }
+      : { mode, port: p, server: '', token: '' });
+    return netView();
+  });
+  handle('net:newPairCode', 'super', () => {
+    if (netStore.get().mode !== 'server') throw new Error('NET_NOT_SERVER');
+    const code = netStore.newPairCode();
+    return { code, expires: netStore.get().pairExpires };
+  });
+  handle('net:revokeClient', 'super', (id) => { netStore.revoke(String(id)); return netView(); });
+  handle('net:pair', 'super', async ({ server, code, name } = {}) => {
+    const pair = net.pair || require('./netClient').pairWithServer;
+    const r = await pair(server, String(code || ''), String(name || os.hostname()).slice(0, 40));
+    netStore.update({ mode: 'client', server: r.server, token: r.token, name: String(name || os.hostname()).slice(0, 40) });
+    return { ...netView(), serverName: r.serverName };
+  });
+  handle('net:restart', 'super', () => { setTimeout(() => net.restart && net.restart(), 400); return true; });
+
+  // Poste : informations (compte Windows, mode kiosque/cybercafé/portable) et boutons d'alimentation (fermer la session, redémarrer, éteindre)
+  handle('system:info', null, () => sysInfo());
+  handle('system:power', null, (action) => {
+    if (!['logoff', 'restart', 'shutdown'].includes(action)) throw new Error('BAD_ACTION');
+    log(`power ${action} (${cur() ? cur().username : 'sans session'})`);
+    return power(action);
   });
 
   // Personnalisation du centre (logo, nom, couleurs) — lisible avant connexion
@@ -339,7 +453,7 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
 
   // Licence
   handle('license:status', null, () => ({ ...licenseInfo(true), trialDays: license.TRIAL_DAYS }));
-  handle('license:activate', null, (key) => {
+  function activateKey(key) {
     const info = license.machineInfo();
     if (!info.ok) throw new Error('NO_MACHINE_ID');
     const r = license.verifyKey(key, info.id);
@@ -356,23 +470,73 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
       clockGuard.writeSeen(config.dataDir, info.id, Date.now());
     }
     return licenseInfo(true);
+  }
+  handle('license:activate', null, (key) => activateKey(key));
+
+  // Émission SUR SITE par Wise Design. La clé privée n'est jamais stockée : elle est collée/choisie à chaque fois, utilisée
+  // en mémoire pour signer, puis oubliée. Depuis l'écran verrouillé : identifiants superadmin requis.
+  const issueOpts = (o = {}) => ({ plan: o.plan, customer: o.customer, start: o.start || undefined });
+  handle('license:issueHere', null, async (username, password, pem, opts) => {
+    await checkAdminCreds(username, password, ['superadmin']);
+    const info = license.machineInfo();
+    if (!info.ok) throw new Error('NO_MACHINE_ID');
+    const { key: k } = license.issueKey({ machine: info.id, privateKeyPem: pem, ...issueOpts(opts) });
+    return activateKey(k);
+  });
+  // Superadmin connecté : génère une clé pour N'IMPORTE QUEL poste (ID saisi) ; l'active ici si c'est ce poste.
+  handle('license:issue', 'super', (pem, { machine, activate, ...opts } = {}) => {
+    const { key, payload } = license.issueKey({ machine: String(machine || '').trim().toUpperCase(), privateKeyPem: pem, ...issueOpts(opts) });
+    const info = license.machineInfo();
+    const here = info.ok && info.id === payload.mid;
+    if (activate && here) activateKey(key);
+    return { key, plan: payload.plan, expires: payload.expires, machine: payload.mid, activated: !!(activate && here) };
+  });
+
+  // ---------- Applications externes (Office, outils de dev…) choisies par le centre ----------
+  const getApps = () => getSetting('apps', []);
+  handle('apps:list', 'user', () => getApps().filter((a) => a.enabled && exists(a.path)).map(({ id, name, icon }) => ({ id, name, icon })));
+  handle('apps:launch', 'user', (id) => {
+    const a = getApps().find((x) => x.id === String(id) && x.enabled);
+    if (!a) throw new Error('NOT_FOUND');
+    const v = appCatalog.validateApp(a, platform === 'win32'); // revalidé à chaque lancement (liste noire, chemin)
+    if (!exists(v.path)) throw new Error('APP_MISSING');
+    const child = spawn(v.path, appCatalog.splitArgs(v.args), { detached: true, stdio: 'ignore', cwd: path.dirname(v.path) });
+    child.on('error', (e) => log(`apps:launch ${v.name}: ${e.message}`));
+    if (child.unref) child.unref();
+    log(`apps:launch ${v.name} (${cur().username})`);
+    onExternalApp({ name: v.name, child });
+    return true;
+  });
+  handle('admin:apps:get', 'manager', () => ({ apps: getApps().map((a) => ({ ...a, exists: exists(a.path) })), detected: appCatalog.detect(process.env, exists) }));
+  handle('admin:apps:save', 'manager', (list) => {
+    if (!Array.isArray(list) || list.length > 40) throw new Error('BAD_NAME');
+    const seen = new Set();
+    const out = list.map((a, i) => {
+      const v = appCatalog.validateApp(a, platform === 'win32');
+      let id = v.id || `app${Date.now().toString(36)}${i}`;
+      while (seen.has(id)) id += 'x';
+      seen.add(id);
+      return { ...v, id };
+    });
+    setSetting('apps', out);
+    return out.map((a) => ({ ...a, exists: exists(a.path) }));
   });
 
   // Cours / progression
   handle('courses:list', 'user', () => currentView());
-  handle('courses:rescan', 'admin', () => { tree = null; return currentView(); });
+  handle('courses:rescan', 'staff', () => { tree = null; treeVersion += 1; return currentView(); });
   handle('progress:update', 'user', ({ itemId, percent, positionSec }) => {
     getTree();
     const it = itemIndex.get(itemId);
     if (!it) throw new Error('ITEM_UNKNOWN');
-    if (session.role !== 'admin' && !allowedCourseIds(session.id).has(itemId.split('/')[0])) throw new Error('FORBIDDEN');
+    if (!isStaff(cur().role) && !allowedCourseIds(cur().id).has(itemId.split('/')[0])) throw new Error('FORBIDDEN');
     const pct = clamp(percent, 0, 100);
     db.prepare(
       `INSERT INTO progress(user_id,item_id,percent,position_sec,completed,updated_at) VALUES(?,?,?,?,?,?)
        ON CONFLICT(user_id,item_id) DO UPDATE SET percent=MAX(percent,excluded.percent), position_sec=excluded.position_sec,
          completed=MAX(completed,excluded.completed), updated_at=excluded.updated_at`
-    ).run(session.id, itemId, pct, Number(positionSec) || 0, pct >= 98 ? 1 : 0, Date.now());
-    if (pct >= 98 && session.role === 'student') ensureCertificates(session.id);
+    ).run(cur().id, itemId, pct, Number(positionSec) || 0, pct >= 98 ? 1 : 0, Date.now());
+    if (pct >= 98 && cur().role === 'student') ensureCertificates(cur().id);
     return true;
   });
   handle('media:readPdf', 'user', (itemId) => {
@@ -387,7 +551,7 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
   // Quiz (correction côté main uniquement)
   handle('quiz:get', 'user', (moduleId, lang) => {
     const st = moduleState(moduleId);
-    if (session.role !== 'admin' && (!st.unlocked || !st.viewed)) throw new Error('MODULE_LOCKED');
+    if (!isStaff(cur().role) && (!st.unlocked || !st.viewed)) throw new Error('MODULE_LOCKED');
     const r = resolveQuiz(moduleId, lang);
     if (!r) throw new Error('NO_QUIZ');
     return {
@@ -397,32 +561,32 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
   });
   handle('quiz:submit', 'user', (moduleId, answers, durationSec, lang) => {
     const st = moduleState(moduleId);
-    if (session.role !== 'admin' && (!st.unlocked || !st.viewed)) throw new Error('MODULE_LOCKED');
+    if (!isStaff(cur().role) && (!st.unlocked || !st.viewed)) throw new Error('MODULE_LOCKED');
     const r = resolveQuiz(moduleId, lang);
     if (!r) throw new Error('NO_QUIZ');
     const { score, details } = quizEngine.grade(r.quiz, answers);
     const passed = score >= st.quiz.passingScore;
     db.prepare('INSERT INTO quiz_results(user_id,module_id,score,passed,answers_json,duration_sec,created_at) VALUES(?,?,?,?,?,?,?)')
-      .run(session.id, moduleId, score, passed ? 1 : 0, JSON.stringify(answers || {}), Math.round(Number(durationSec) || 0), Date.now());
+      .run(cur().id, moduleId, score, passed ? 1 : 0, JSON.stringify(answers || {}), Math.round(Number(durationSec) || 0), Date.now());
     let certificate = false;
-    if (passed && session.role === 'student') {
-      const before = db.prepare('SELECT COUNT(*) c FROM certificates WHERE user_id=?').get(session.id).c;
-      ensureCertificates(session.id);
-      certificate = db.prepare('SELECT COUNT(*) c FROM certificates WHERE user_id=?').get(session.id).c > before;
+    if (passed && cur().role === 'student') {
+      const before = db.prepare('SELECT COUNT(*) c FROM certificates WHERE user_id=?').get(cur().id).c;
+      ensureCertificates(cur().id);
+      certificate = db.prepare('SELECT COUNT(*) c FROM certificates WHERE user_id=?').get(cur().id).c > before;
     }
     return { score, passed, passingScore: st.quiz.passingScore, details, certificate };
   });
 
   // Certificat : l'étudiant voit le sien, le formateur celui de n'importe qui
-  handle('cert:get', 'user', (courseId, userId) => certificateData(session.role === 'admin' && userId ? userId : session.id, courseId));
+  handle('cert:get', 'user', (courseId, userId) => certificateData(isStaff(cur().role) && userId ? userId : cur().id, courseId));
 
   // Impression (réservée au formateur) — la boîte de dialogue système passe au premier plan
-  handle('print:page', 'admin', () => new Promise((resolve) => {
+  handle('print:page', 'staff', () => new Promise((resolve) => {
     const win = getWindow(); if (!win) return resolve(false);
     setOnTop(false);
     win.webContents.print({ silent: false, printBackground: true }, (ok) => { setOnTop(true); resolve(ok); });
   }));
-  handle('print:pdf', 'admin', async (name) => {
+  handle('print:pdf', 'staff', async (name) => {
     const win = getWindow(); if (!win) throw new Error('NO_WINDOW');
     const dir = path.join(config.dataDir, 'exports'); fs.mkdirSync(dir, { recursive: true });
     const safe = String(name || 'document').replace(/[^\w.\-]+/g, '_').slice(0, 60);
@@ -432,48 +596,56 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
   });
 
   // ---------- Admin : utilisateurs, classes, inscriptions ----------
-  handle('admin:users:list', 'admin', () =>
+  handle('admin:users:list', 'staff', () =>
     db.prepare(`SELECT u.id,u.username,u.role,u.full_name,u.active,u.created_at,u.last_login_at,u.class_id,c.name class_name
                 FROM users u LEFT JOIN classes c ON c.id=u.class_id ORDER BY u.role, u.username`).all()
+      .filter((u) => RANK[u.role] <= RANK[cur().role]) // un profil ne voit jamais les comptes de rang supérieur
       .map((u) => ({ ...u, courses: u.role === 'student' ? allowedCourseIds(u.id).size : null })));
-  handle('admin:users:create', 'admin', ({ username, password, fullName, role, classId }) => {
+  handle('admin:users:create', 'staff', ({ username, password, fullName, role, classId }) => {
     username = String(username || '').trim();
     if (!/^[\w.\-@]{3,40}$/.test(username)) throw new Error('BAD_USERNAME');
     if (String(password || '').length < 6) throw new Error('PASSWORD_TOO_SHORT');
     if (db.prepare('SELECT 1 FROM users WHERE username=?').get(username)) throw new Error('USER_EXISTS');
+    role = grantable(cur().role).includes(role) ? role : 'student';
     db.prepare('INSERT INTO users(username,password_hash,role,full_name,must_change_password,created_at,class_id) VALUES(?,?,?,?,1,?,?)')
-      .run(username, bcrypt.hashSync(password, 10), role === 'admin' ? 'admin' : 'student', fullName || '', Date.now(), classId || null);
+      .run(username, bcrypt.hashSync(password, 10), role, fullName || '', Date.now(), classId || null);
     return true;
   });
-  handle('admin:users:update', 'admin', (id, { fullName, classId, role }) => {
-    if (id === session.id && role && role !== 'admin') throw new Error('SELF_FORBIDDEN');
+  handle('admin:users:update', 'staff', (id, { fullName, classId, role }) => {
+    const target = manageable(id);
+    if (id === cur().id && role && role !== cur().role) throw new Error('SELF_FORBIDDEN');
+    if (role && role !== target.role && !grantable(cur().role).includes(role)) throw new Error('FORBIDDEN');
     db.prepare('UPDATE users SET full_name=COALESCE(?,full_name), class_id=?, role=COALESCE(?,role) WHERE id=?')
-      .run(dec(fullName), classId || null, role === 'admin' || role === 'student' ? role : null, id);
+      .run(dec(fullName), classId || null, role && RANK[role] != null ? role : null, id);
     return true;
   });
-  handle('admin:users:resetPassword', 'admin', (id, password) => {
+  handle('admin:users:resetPassword', 'staff', (id, password) => {
     if (String(password || '').length < 6) throw new Error('PASSWORD_TOO_SHORT');
+    if (id !== cur().id) manageable(id);
     db.prepare('UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?').run(bcrypt.hashSync(password, 10), id);
     return true;
   });
-  handle('admin:users:setActive', 'admin', (id, active) => {
-    if (id === session.id) throw new Error('SELF_FORBIDDEN');
+  handle('admin:users:setActive', 'staff', (id, active) => {
+    if (id === cur().id) throw new Error('SELF_FORBIDDEN');
+    manageable(id);
     db.prepare('UPDATE users SET active=? WHERE id=?').run(active ? 1 : 0, id); return true;
   });
-  handle('admin:users:resetProgress', 'admin', (id) => {
+  handle('admin:users:resetProgress', 'staff', (id) => {
+    manageable(id);
     db.prepare('DELETE FROM progress WHERE user_id=?').run(id);
     db.prepare('DELETE FROM quiz_results WHERE user_id=?').run(id);
     db.prepare('DELETE FROM certificates WHERE user_id=?').run(id); return true;
   });
-  handle('admin:users:delete', 'admin', (id) => {
-    if (id === session.id) throw new Error('SELF_FORBIDDEN');
+  handle('admin:users:delete', 'staff', (id) => {
+    if (id === cur().id) throw new Error('SELF_FORBIDDEN');
+    manageable(id);
     db.prepare('DELETE FROM users WHERE id=?').run(id); return true;
   });
 
-  handle('admin:classes:list', 'admin', () =>
+  handle('admin:classes:list', 'staff', () =>
     db.prepare(`SELECT c.id, c.name, (SELECT COUNT(*) FROM users u WHERE u.class_id=c.id AND u.role='student') students FROM classes c ORDER BY c.name`).all()
       .map((c) => ({ ...c, courseIds: db.prepare('SELECT course_id FROM class_courses WHERE class_id=?').all(c.id).map((r) => r.course_id) })));
-  handle('admin:classes:save', 'admin', ({ id, name, courseIds }) => {
+  handle('admin:classes:save', 'staff', ({ id, name, courseIds }) => {
     name = String(name || '').trim();
     if (!name || name.length > 60) throw new Error('BAD_NAME');
     db.transaction(() => {
@@ -490,26 +662,26 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
     })();
     return true;
   });
-  handle('admin:classes:delete', 'admin', (id) => { db.prepare('DELETE FROM classes WHERE id=?').run(id); return true; });
+  handle('admin:classes:delete', 'staff', (id) => { db.prepare('DELETE FROM classes WHERE id=?').run(id); return true; });
 
-  handle('admin:courses:meta', 'admin', () => { getTree(); return tree.courses.map((c) => ({ id: c.id, title: c.title, modules: c.modules.length })); });
-  handle('admin:enroll:getUser', 'admin', (uid) => {
+  handle('admin:courses:meta', 'staff', () => { getTree(); return tree.courses.map((c) => ({ id: c.id, title: c.title, modules: c.modules.length })); });
+  handle('admin:enroll:getUser', 'staff', (uid) => {
     const direct = db.prepare('SELECT course_id FROM enrollments WHERE user_id=?').all(uid).map((r) => r.course_id);
     const all = allowedCourseIds(uid);
     return { direct, viaClass: [...all].filter((c) => !direct.includes(c)) };
   });
-  handle('admin:enroll:setUser', 'admin', (uid, courseIds) => {
+  handle('admin:enroll:setUser', 'staff', (uid, courseIds) => {
     db.transaction(() => {
       db.prepare('DELETE FROM enrollments WHERE user_id=?').run(uid);
       for (const c of new Set(courseIds || [])) db.prepare('INSERT INTO enrollments(user_id,course_id,enrolled_at) VALUES(?,?,?)').run(uid, String(c), Date.now());
     })();
     return true;
   });
-  handle('admin:enroll:getCourse', 'admin', (courseId) => ({
+  handle('admin:enroll:getCourse', 'staff', (courseId) => ({
     direct: db.prepare('SELECT user_id FROM enrollments WHERE course_id=?').all(courseId).map((r) => r.user_id),
     viaClass: db.prepare(`SELECT u.id FROM users u JOIN class_courses cc ON cc.class_id=u.class_id WHERE cc.course_id=? AND u.role='student'`).all(courseId).map((r) => r.id),
   }));
-  handle('admin:enroll:setCourse', 'admin', (courseId, userIds) => {
+  handle('admin:enroll:setCourse', 'staff', (courseId, userIds) => {
     db.transaction(() => {
       db.prepare('DELETE FROM enrollments WHERE course_id=?').run(courseId);
       for (const u of new Set(userIds || [])) db.prepare('INSERT INTO enrollments(user_id,course_id,enrolled_at) VALUES(?,?,?)').run(u, courseId, Date.now());
@@ -518,13 +690,13 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
   });
 
   // ---------- Admin : ordre des modules / leçons ----------
-  handle('admin:order:get', 'admin', (courseId) => {
+  handle('admin:order:get', 'staff', (courseId) => {
     getTree();
     const c = tree.courses.find((x) => x.id === courseId);
     if (!c) throw new Error('COURSE_UNKNOWN');
     return c.modules.filter((m) => !m.id.endsWith('/_general')).map((m) => ({ id: m.id, title: m.title, items: m.items.map((i) => ({ id: i.id, title: i.title, type: i.type })) }));
   });
-  handle('admin:order:save', 'admin', (courseId, modules) => {
+  handle('admin:order:save', 'staff', (courseId, modules) => {
     getTree();
     const course = tree.courses.find((c) => c.id === courseId);
     if (!course) throw new Error('COURSE_UNKNOWN');
@@ -549,8 +721,8 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
   });
 
   // ---------- Admin : éditeur de quiz ----------
-  handle('admin:modules:list', 'admin', () => { getTree(); return [...moduleIndex.values()].map(({ course, module }) => ({ id: module.id, label: `${course.title} › ${module.title}` })); });
-  handle('admin:quiz:read', 'admin', (moduleId) => {
+  handle('admin:modules:list', 'staff', () => { getTree(); return [...moduleIndex.values()].map(({ course, module }) => ({ id: module.id, label: `${course.title} › ${module.title}` })); });
+  handle('admin:quiz:read', 'staff', (moduleId) => {
     getTree();
     const e = moduleIndex.get(moduleId);
     if (!e) throw new Error('MODULE_UNKNOWN');
@@ -560,7 +732,7 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
     try { return { exists: true, quiz: { ...blank, ...JSON.parse(fs.readFileSync(f, 'utf8').replace(/^﻿/, '')) } }; }
     catch (err) { return { exists: true, quiz: blank, broken: err.message }; }
   });
-  handle('admin:quiz:save', 'admin', (moduleId, quiz) => {
+  handle('admin:quiz:save', 'staff', (moduleId, quiz) => {
     getTree();
     const e = moduleIndex.get(moduleId);
     if (!e) throw new Error('MODULE_UNKNOWN');
@@ -573,9 +745,9 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
   });
 
   // ---------- Admin : statistiques, relevés, résultats ----------
-  handle('admin:stats:overview', 'admin', () => statsOverview());
-  handle('admin:report:transcript', 'admin', (uid) => buildTranscript(uid));
-  handle('admin:report:certificate', 'admin', (uid, courseId) => certificateData(uid, courseId));
+  handle('admin:stats:overview', 'staff', () => statsOverview());
+  handle('admin:report:transcript', 'staff', (uid) => buildTranscript(uid));
+  handle('admin:report:certificate', 'staff', (uid, courseId) => certificateData(uid, courseId));
   const resultsRows = () => {
     getTree();
     return db.prepare(
@@ -583,8 +755,8 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
        FROM quiz_results q JOIN users u ON u.id=q.user_id LEFT JOIN classes c ON c.id=u.class_id ORDER BY q.created_at DESC LIMIT 5000`
     ).all().map((r) => ({ ...r, module: moduleIndex.get(r.module_id)?.module.title || r.module_id, course: moduleIndex.get(r.module_id)?.course.title || '' }));
   };
-  handle('admin:results:list', 'admin', () => resultsRows().slice(0, 1000));
-  handle('admin:results:export', 'admin', (lang) => {
+  handle('admin:results:list', 'staff', () => resultsRows().slice(0, 1000));
+  handle('admin:results:export', 'staff', (lang) => {
     const L = LANGS.has(lang) ? lang : 'fr';
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = resultsRows().map((r) => [new Date(r.created_at).toISOString(), r.username, r.full_name, r.class_name || '', r.course, r.module, r.score, r.passed ? YES[L][0] : YES[L][1], r.duration_sec].map(esc).join(';'));
@@ -596,15 +768,15 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
   });
 
   // ---------- Admin : paramètres & personnalisation ----------
-  handle('admin:settings:get', 'admin', () => getSettings());
-  handle('admin:settings:set', 'admin', (s) => {
+  handle('admin:settings:get', 'staff', () => getSettings());
+  handle('admin:settings:set', 'manager', (s) => {
     if (typeof s.courseRoot === 'string' && s.courseRoot.trim()) setSetting('courseRoot', s.courseRoot.trim());
     if (s.minScore != null) setSetting('minScore', clamp(s.minScore, 0, 100));
     if (s.autoQuiz != null) setSetting('autoQuiz', !!s.autoQuiz);
     if (s.allowSkip != null) setSetting('allowSkip', !!s.allowSkip);
     tree = null; return getSettings();
   });
-  handle('admin:branding:set', 'admin', ({ centerName, slogan, primary, secondary }) => {
+  handle('admin:branding:set', 'manager', ({ centerName, slogan, primary, secondary }) => {
     setSetting('center.name', String(centerName || '').trim().slice(0, 80));
     setSetting('center.slogan', String(slogan || '').trim().slice(0, 140));
     setSetting('center.primary', HEX.test(primary || '') ? primary : '');
@@ -612,7 +784,7 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
     return true;
   });
   const removeLogos = (dir) => { for (const ext of Object.keys(IMG_EXT)) { try { fs.unlinkSync(path.join(dir, 'logo' + ext)); } catch { /* absent */ } } };
-  handle('admin:branding:saveLogo', 'admin', (dataUrl) => {
+  handle('admin:branding:saveLogo', 'manager', (dataUrl) => {
     const m = /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
     if (!m) throw new Error('BAD_IMAGE');
     const buf = Buffer.from(m[2], 'base64');
@@ -622,18 +794,22 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log }) {
     fs.writeFileSync(path.join(dir, 'logo.' + (m[1] === 'jpeg' ? 'jpg' : m[1])), buf);
     return true;
   });
-  handle('admin:branding:removeLogo', 'admin', () => { removeLogos(path.join(getCourseRoot(), '_branding')); return true; });
+  handle('admin:branding:removeLogo', 'manager', () => { removeLogos(path.join(getCourseRoot(), '_branding')); return true; });
 
   // Sortie contrôlée (re-saisie du mot de passe admin) ; maintenance = lever les restrictions Windows
-  handle('admin:exit', 'admin', (password, maintenance) => {
-    const u = db.prepare('SELECT password_hash FROM users WHERE id=?').get(session.id);
-    if (!bcrypt.compareSync(String(password || ''), u.password_hash)) throw new Error('BAD_CREDENTIALS');
-    quitApp(!!maintenance); return true;
+  handle('admin:exit', 'manager', async (password, maintenance) => {
+    const role = await checkAdminCreds(cur().username, password, [cur().role]);
+    quitApp(role === 'superadmin' && !!maintenance); return true;
   });
 
   return {
+    // Serveur réseau : exécution d'un canal pour un poste client, session propre, accès média, version de l'arborescence
+    dispatch: (channel, args, holder) => invoke(channel, args, holder),
+    newHolder: () => ({ session: null }),
+    mediaPath: (holder, rel) => als.run(holder, () => resolveMedia(rel)),
+    treeVersion: () => treeVersion,
     getCourseRoot, resolveMedia, licenseInfo,
-    isLoggedIn: () => !!session,
+    isLoggedIn: () => !!localHolder.session,
     stop: () => { try { watcher?.close(); } catch { /* ignoré */ } },
   };
 }

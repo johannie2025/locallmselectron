@@ -9,7 +9,7 @@ module.exports = {
       },
       keyframes: {
         float: { '0%,100%': { transform: 'translate(0,0) scale(1)' }, '50%': { transform: 'translate(30px,-40px) scale(1.1)' } },
-        rise: { '0%': { transform: 'translateY(0)', opacity: '0' }, '10%': { opacity: '.5' }, '90%': { opacity: '.5' }, '100%': { transform: 'translateY(-115vh)', opacity: '0' } },
+        rise: { '0%': { transform: 'translateY(0)', opacity: '0' }, '8%': { opacity: '1' }, '92%': { opacity: '1' }, '100%': { transform: 'translateY(-115vh)', opacity: '0' } },
         gradientShift: { '0%,100%': { backgroundPosition: '0% 50%' }, '50%': { backgroundPosition: '100% 50%' } },
         kenburns: { '0%': { transform: 'scale(1)' }, '100%': { transform: 'scale(1.12) translate(-1.5%,-1.5%)' } },
         fadeUp: { '0%': { opacity: '0', transform: 'translateY(16px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },

@@ -50,7 +50,7 @@ export default function Dashboard({ data, go, user }) {
         </div>
         {data.stale && <p className="mb-4 text-amber-300 text-sm">{t('dash.stale')}</p>}
         <h3 className="text-xl font-semibold mb-4">{t('dash.myCourses')}</h3>
-        {!data.courses.length && <Empty>{user.role === 'admin' ? t('dash.noCoursesAdmin') : t('dash.noCourses')}</Empty>}
+        {!data.courses.length && <Empty>{user.role !== 'student' ? t('dash.noCoursesAdmin') : t('dash.noCourses')}</Empty>}
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
           {data.courses.map((c, idx) => {
             const cv = cover(c.title);

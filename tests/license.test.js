@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
-const { computeExpiry, evaluate, parseKey, fingerprint, cleanPart, parseWmic, TRIAL_DAYS } = require('../electron/license');
+const { computeExpiry, evaluate, parseKey, fingerprint, cleanPart, parseWmic, issueKey, TRIAL_DAYS } = require('../electron/license');
 const clockGuard = require('../electron/clockGuard');
 
 const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -100,4 +100,18 @@ test('clockGuard : valeur signée par poste, falsification et copie depuis un au
   clockGuard.writeSeen(dir, MID, ts);
   assert.strictEqual(clockGuard.readSeen(dir, MID), ts);
   assert.strictEqual(clockGuard.readSeen(dir, 'AUTRE-PC'), 0);
+});
+
+test('issueKey : émet une clé valide pour le poste visé ; refuse clé privée étrangère, PEM invalide, ID/plan/date invalides', () => {
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const r = issueKey({ machine: MID, plan: 'semester', customer: 'Centre Test', start: today(), privateKeyPem: pem, publicKey });
+  assert.strictEqual(ev(r.key).state, 'active');
+  assert.strictEqual(ev(r.key, { machine: 'ZZZZ-BBBB-CCCC-DDDD-EEEE' }).state, 'invalid');
+  const other = crypto.generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' });
+  assert.throws(() => issueKey({ machine: MID, plan: 'annual', privateKeyPem: other, publicKey }), /KEY_MISMATCH/);
+  assert.throws(() => issueKey({ machine: MID, plan: 'annual', privateKeyPem: 'pas une clé', publicKey }), /PEM_INVALID/);
+  assert.throws(() => issueKey({ machine: MID, plan: 'annual', privateKeyPem: crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }), publicKey }), /PEM_INVALID/);
+  assert.throws(() => issueKey({ machine: 'abc', plan: 'annual', privateKeyPem: pem, publicKey }), /BAD_MACHINE_ID/);
+  assert.throws(() => issueKey({ machine: MID, plan: 'weekly', privateKeyPem: pem, publicKey }), /PLAN_UNKNOWN/);
+  assert.throws(() => issueKey({ machine: MID, plan: 'annual', start: '2026/01/01', privateKeyPem: pem, publicKey }), /DATE_INVALID/);
 });

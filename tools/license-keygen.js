@@ -14,7 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { computeExpiry, PLAN_MONTHS } = require('../electron/license');
+const { issueKey, PLAN_MONTHS } = require('../electron/license');
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -38,12 +38,9 @@ if (cmd === 'init') {
   if (!PLAN_MONTHS[plan]) die('--plan doit être monthly, quarterly, semester ou annual');
   if (!fs.existsSync(PRIV)) die(`clé privée introuvable : ${PRIV}`);
   const start = opt('start', new Date().toISOString().slice(0, 10));
-  let expires;
-  try { expires = computeExpiry(start, plan); } catch (e) { die(e.message); }
-  const payload = { v: 1, mid, plan, customer: opt('customer', ''), issued: start, expires: expires.toISOString() };
-  const body = b64u(JSON.stringify(payload));
-  const sig = crypto.sign(null, Buffer.from(body), crypto.createPrivateKey(fs.readFileSync(PRIV)));
-  console.log(`Poste : ${mid}\nPlan : ${plan}   Expire le : ${expires.toISOString().slice(0, 10)}\n\n` + `WLS1.${body}.${b64u(sig)}\n`);
+  let r;
+  try { r = issueKey({ machine: mid, plan, customer: opt('customer', ''), start, privateKeyPem: fs.readFileSync(PRIV, 'utf8') }); } catch (e) { die(e.message); }
+  console.log(`Poste : ${mid}\nPlan : ${plan}   Expire le : ${r.payload.expires.slice(0, 10)}\n\n${r.key}\n`);
 } else {
   console.log(fs.readFileSync(__filename, 'utf8').split('*/')[0].replace(/^[^]*?\/\*\*/, '').replace(/^ \* ?/gm, ''));
 }

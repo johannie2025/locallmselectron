@@ -3,6 +3,8 @@ import { api, errText } from '../../api.js';
 import { useI18n } from '../../i18n/index.jsx';
 import { useBrand, extractPalette } from '../../brand/BrandProvider.jsx';
 import { useUi } from '../../components/ui.jsx';
+import LicenseIssuer from '../../components/LicenseIssuer.jsx';
+import AdminNetwork from './AdminNetwork.jsx';
 
 function Branding() {
   const { t } = useI18n();
@@ -92,7 +94,49 @@ function General() {
   );
 }
 
-function License({ lic, onLicense }) {
+function AppsAdmin() {
+  const { t } = useI18n();
+  const { toast } = useUi();
+  const [list, setList] = useState(null);
+  const [detected, setDetected] = useState([]);
+  useEffect(() => { api('admin:apps:get').then((r) => { setList(r.apps); setDetected(r.detected); }); }, []);
+  if (!list) return null;
+  const upd = (i, p) => setList(list.map((a, k) => (k === i ? { ...a, ...p } : a)));
+  const detect = () => {
+    const have = new Set(list.map((a) => a.path.toLowerCase() + '|' + (a.args || '')));
+    const fresh = detected.filter((d) => !have.has(d.path.toLowerCase() + '|' + (d.args || ''))).map((d) => ({ ...d, enabled: true, exists: true }));
+    setList([...list, ...fresh]);
+    toast(fresh.length ? t('apps.admin.found', { n: fresh.length }) : t('apps.admin.nothing'));
+  };
+  const save = async () => {
+    try { setList(await api('admin:apps:save', list)); toast(t('common.saved')); } catch (e) { toast(errText(e, t), 'err'); }
+  };
+  return (
+    <div className="card space-y-4">
+      <p className="text-sm text-slate-300">{t('apps.admin.help')}</p>
+      <p className="text-xs text-amber-300">{t('apps.admin.devWarn')}</p>
+      <div className="flex flex-wrap gap-2">
+        <button className="btn-ghost btn-sm" onClick={detect}>🔎 {t('apps.admin.detect')}</button>
+        <button className="btn-ghost btn-sm" onClick={() => setList([...list, { id: '', name: '', path: '', args: '', enabled: true, icon: '🧩', exists: true }])}>＋ {t('apps.admin.add')}</button>
+      </div>
+      <div className="space-y-2">
+        {list.map((a, i) => (
+          <div key={i} className="grid md:grid-cols-[auto_1fr_2fr_1fr_auto] gap-2 items-end rounded-lg bg-slate-900/50 p-2">
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={a.enabled} onChange={(e) => upd(i, { enabled: e.target.checked })} /> {a.icon} {t('apps.admin.enabled')}</label>
+            <div><label className="label">{t('apps.admin.name')}</label><input className="input" value={a.name} maxLength={40} onChange={(e) => upd(i, { name: e.target.value })} /></div>
+            <div><label className="label">{t('apps.admin.path')}</label><input className="input font-mono text-xs" value={a.path} onChange={(e) => upd(i, { path: e.target.value })} placeholder="C:\\Program Files\\…\\app.exe" />
+              {a.path && a.exists === false && <span className="text-xs text-amber-300">{t('apps.admin.missing')}</span>}</div>
+            <div><label className="label">{t('apps.admin.args')}</label><input className="input font-mono text-xs" value={a.args || ''} maxLength={200} onChange={(e) => upd(i, { args: e.target.value })} /></div>
+            <button className="btn-danger btn-sm" onClick={() => setList(list.filter((_, k) => k !== i))}>🗑</button>
+          </div>
+        ))}
+      </div>
+      <button className="btn-primary" onClick={save}>💾 {t('common.save')}</button>
+    </div>
+  );
+}
+
+function License({ lic, onLicense, user }) {
   const { t, fmtDate } = useI18n();
   const { toast } = useUi();
   const [key, setKey] = useState('');
@@ -116,39 +160,52 @@ function License({ lic, onLicense }) {
         <textarea className="input font-mono text-xs h-28" value={key} onChange={(e) => setKey(e.target.value)} placeholder={t('lic.keyPlaceholder')} />
         <button className="btn-primary" onClick={async () => { try { await api('license:activate', key); setKey(''); toast(t('lic.activated')); onLicense(); } catch (e) { toast(errText(e, t), 'err'); } }}>🔑 {t('lic.activate')}</button>
       </div>
+      {user.role === 'superadmin' && <div className="card lg:col-span-2"><LicenseIssuer mode="session" machineId={lic.machineId} onDone={onLicense} /></div>}
     </div>
   );
 }
 
-function Exit() {
+function Exit({ user, sys }) {
   const { t } = useI18n();
   const [p, setP] = useState('');
   const [maint, setMaint] = useState(false);
   const [err, setErr] = useState('');
   return (
     <div className="card space-y-3 max-w-md">
+      {sys && (
+        <div className="rounded-lg bg-slate-900/70 p-3 text-sm space-y-1">
+          <div className="text-xs text-slate-400">{t('sys.title')}</div>
+          <div><span className="text-slate-400">{t('sys.user')} : </span><span className="font-mono">{sys.winUser || '—'}</span></div>
+          <div><span className="text-slate-400">{t('sys.mode')} : </span>{t(sys.shell ? 'sys.mode.shell' : sys.kiosk ? 'sys.mode.kiosk' : 'sys.mode.window')}</div>
+          {sys.portable && <div>{t('sys.portable')}</div>}
+          {sys.netMode && sys.netMode !== 'standalone' && <div><span className="text-slate-400">{t('sys.net')} : </span>{t(`net.badge.${sys.netMode}`)}{sys.netServer ? ` → ${sys.netServer}` : ''}</div>}
+          {sys.shell && <p className="text-xs text-amber-300">{t('sys.shellHelp')}</p>}
+        </div>
+      )}
       <p>{t('exit.help')}</p>
       <input className="input" type="password" value={p} onChange={(e) => setP(e.target.value)} placeholder={t('common.password')} />
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={maint} onChange={(e) => setMaint(e.target.checked)} /> {t('exit.maintenance')}</label>
+      {user.role === 'superadmin' && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={maint} onChange={(e) => setMaint(e.target.checked)} /> {t('exit.maintenance')}</label>}
       {err && <p className="text-rose-400 text-sm">{err}</p>}
       <button className="btn-danger" onClick={() => api('admin:exit', p, maint).catch((e) => setErr(errText(e, t)))}>⏻ {t('exit.quit')}</button>
     </div>
   );
 }
 
-export default function AdminSettings({ lic, onLicense }) {
+export default function AdminSettings({ lic, onLicense, user, sys }) {
   const { t } = useI18n();
   const [sub, setSub] = useState('brand');
   return (
     <div className="space-y-5">
       <h2 className="text-2xl font-semibold">{t('admin.settings')}</h2>
       <div className="flex gap-2 flex-wrap">
-        {[['brand', 'set.brand'], ['general', 'set.general'], ['license', 'set.license'], ['exit', 'set.exit']].map(([i, k]) => <button key={i} className={sub === i ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'} onClick={() => setSub(i)}>{t(k)}</button>)}
+        {[['brand', 'set.brand'], ['general', 'set.general'], ['apps', 'set.apps'], ...(user.role === 'superadmin' ? [['network', 'set.network']] : []), ['license', 'set.license'], ['exit', 'set.exit']].map(([i, k]) => <button key={i} className={sub === i ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'} onClick={() => setSub(i)}>{t(k)}</button>)}
       </div>
       {sub === 'brand' && <Branding />}
       {sub === 'general' && <General />}
-      {sub === 'license' && <License lic={lic} onLicense={onLicense} />}
-      {sub === 'exit' && <Exit />}
+      {sub === 'apps' && <AppsAdmin />}
+      {sub === 'network' && user.role === 'superadmin' && <AdminNetwork />}
+      {sub === 'license' && <License lic={lic} onLicense={onLicense} user={user} />}
+      {sub === 'exit' && <Exit user={user} sys={sys} />}
     </div>
   );
 }

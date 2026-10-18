@@ -45,7 +45,7 @@ function EnrollUserModal({ user, onClose, onSaved }) {
   );
 }
 
-function Users() {
+function Users({ user }) {
   const { t, fmtDateTime } = useI18n();
   const { confirm, prompt } = useUi();
   const [rows, setRows] = useState([]);
@@ -56,6 +56,10 @@ function Users() {
   const load = () => Promise.all([api('admin:users:list'), api('admin:classes:list')]).then(([u, c]) => { setRows(u); setClasses(c); });
   useEffect(() => { load(); }, []);
   const run = useRun(load);
+  const RANK = { student: 0, trainer: 1, admin: 2, superadmin: 3 };
+  const myRole = user.role;
+  const roles = myRole === 'superadmin' ? ['student', 'trainer', 'admin', 'superadmin'] : Object.keys(RANK).filter((k) => RANK[k] < RANK[myRole]);
+  const can = (u) => myRole === 'superadmin' || RANK[u.role] < RANK[myRole]; // même règle que le serveur
   const list = rows.filter((u) => `${u.full_name} ${u.username}`.toLowerCase().includes(q.toLowerCase()));
 
   return (
@@ -65,7 +69,7 @@ function Users() {
         <div><label className="label">{t('common.fullName')}</label><input className="input" value={f.fullName} onChange={(e) => setF({ ...f, fullName: e.target.value })} /></div>
         <div><label className="label">{t('ppl.initialPassword')}</label><input className="input" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></div>
         <div><label className="label">{t('ppl.role')}</label>
-          <select className="input" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}><option value="student">{t('ppl.student')}</option><option value="admin">{t('ppl.trainer')}</option></select></div>
+          <select className="input" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>{roles.map((r) => <option key={r} value={r}>{t(`ppl.${r}`)}</option>)}</select></div>
         <div><label className="label">{t('common.class')}</label>
           <select className="input" value={f.classId} onChange={(e) => setF({ ...f, classId: e.target.value })}><option value="">—</option>{classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
         <button className="btn-primary" onClick={() => run(async () => { await api('admin:users:create', { ...f, classId: f.classId ? Number(f.classId) : null }); setF({ ...f, username: '', password: '', fullName: '' }); }, t('common.saved'))}>＋ {t('common.create')}</button>
@@ -77,18 +81,18 @@ function Users() {
           {list.map((u) => (
             <tr key={u.id} className={`border-t border-white/10 ${u.active ? '' : 'opacity-50'}`}>
               <td className="py-2">{u.full_name || u.username} <span className="text-slate-400">({u.username})</span></td>
-              <td>{u.role === 'admin' ? t('ppl.trainer') : t('ppl.student')}</td>
+              <td>{t(`ppl.${u.role}`)}</td>
               <td>{u.role === 'student'
                 ? <select className="input !py-1 !w-auto" value={u.class_id ?? ''} onChange={(e) => run(() => api('admin:users:update', u.id, { classId: e.target.value ? Number(e.target.value) : null }))}>
                   <option value="">—</option>{classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select> : '—'}</td>
               <td>{u.courses ?? '—'}</td>
               <td className="text-slate-400">{fmtDateTime(u.last_login_at)}</td>
               <td className="text-right space-x-1 whitespace-nowrap">
-                {u.role === 'student' && <button className="btn-ghost btn-sm" onClick={() => setEnroll(u)}>📚 {t('ppl.courses')}</button>}
-                <button className="btn-ghost btn-sm" onClick={async () => { const p = await prompt(t('ppl.newPassword'), { type: 'password' }); if (p) run(() => api('admin:users:resetPassword', u.id, p), t('common.saved')); }}>🔑</button>
-                {u.role === 'student' && <button className="btn-ghost btn-sm" title={t('ppl.resetProgress')} onClick={async () => { if (await confirm(t('ppl.resetProgressQ'), { danger: true })) run(() => api('admin:users:resetProgress', u.id), t('common.saved')); }}>↺</button>}
-                <button className="btn-ghost btn-sm" onClick={() => run(() => api('admin:users:setActive', u.id, !u.active))}>{u.active ? t('ppl.disable') : t('ppl.enable')}</button>
-                <button className="btn-danger btn-sm" onClick={async () => { if (await confirm(t('ppl.deleteQ', { name: u.username }), { danger: true })) run(() => api('admin:users:delete', u.id)); }}>🗑</button>
+                {u.role === 'student' && can(u) && <button className="btn-ghost btn-sm" onClick={() => setEnroll(u)}>📚 {t('ppl.courses')}</button>}
+                {(can(u) || u.id === user.id) && <button className="btn-ghost btn-sm" onClick={async () => { const p = await prompt(t('ppl.newPassword'), { type: 'password' }); if (p) run(() => api('admin:users:resetPassword', u.id, p), t('common.saved')); }}>🔑</button>}
+                {u.role === 'student' && can(u) && <button className="btn-ghost btn-sm" title={t('ppl.resetProgress')} onClick={async () => { if (await confirm(t('ppl.resetProgressQ'), { danger: true })) run(() => api('admin:users:resetProgress', u.id), t('common.saved')); }}>↺</button>}
+                {can(u) && u.id !== user.id && <><button className="btn-ghost btn-sm" onClick={() => run(() => api('admin:users:setActive', u.id, !u.active))}>{u.active ? t('ppl.disable') : t('ppl.enable')}</button>
+                <button className="btn-danger btn-sm" onClick={async () => { if (await confirm(t('ppl.deleteQ', { name: u.username }), { danger: true })) run(() => api('admin:users:delete', u.id)); }}>🗑</button></>}
               </td>
             </tr>
           ))}
@@ -208,7 +212,7 @@ function Enrollments() {
   );
 }
 
-export default function AdminPeople() {
+export default function AdminPeople({ user }) {
   const { t } = useI18n();
   const [sub, setSub] = useState('users');
   return (
@@ -217,7 +221,7 @@ export default function AdminPeople() {
       <div className="flex gap-2">
         {[['users', 'ppl.users'], ['classes', 'ppl.classes'], ['enroll', 'ppl.enroll']].map(([id, k]) => <button key={id} className={sub === id ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'} onClick={() => setSub(id)}>{t(k)}</button>)}
       </div>
-      {sub === 'users' && <Users />}
+      {sub === 'users' && <Users user={user} />}
       {sub === 'classes' && <Classes />}
       {sub === 'enroll' && <Enrollments />}
     </div>

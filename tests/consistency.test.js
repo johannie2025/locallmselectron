@@ -12,7 +12,10 @@ const preload = new Set([...read('electron/preload.js').split('new Set([')[1].sp
 const handlers = new Set([...read('electron/ipc.js').matchAll(/handle\('([^']+)'/g)].map((m) => m[1]));
 
 test('IPC : la liste blanche du preload = les handlers de ipc.js', () => {
-  assert.deepStrictEqual([...handlers].filter((c) => !preload.has(c)), [], 'handler non exposé');
+  // canaux réservés aux postes clients (HTTP serveur) : volontairement ABSENTS de la liste blanche du renderer
+  const REMOTE_ONLY = new Set(['net:verifyAdmin']);
+  assert.ok([...REMOTE_ONLY].every((c) => !preload.has(c)), 'un canal réseau interne ne doit pas être appelable depuis l\'interface');
+  assert.deepStrictEqual([...handlers].filter((c) => !preload.has(c) && !REMOTE_ONLY.has(c)), [], 'handler non exposé');
   assert.deepStrictEqual([...preload].filter((c) => !handlers.has(c)), [], 'canal sans handler');
 });
 

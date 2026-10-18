@@ -5,7 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 // (tests/consistency.test.js vérifie qu'elle correspond exactement aux handlers de ipc.js)
 const CHANNELS = new Set([
   'auth:login', 'auth:logout', 'auth:me', 'auth:changePassword', 'auth:setLang', 'auth:adminExit',
-  'branding:get', 'license:status', 'license:activate',
+  'branding:get', 'apps:list', 'apps:launch', 'admin:apps:get', 'admin:apps:save', 'net:getConfig', 'net:setMode', 'net:newPairCode', 'net:revokeClient', 'net:pair', 'net:restart', 'system:info', 'system:power', 'license:status', 'license:activate', 'license:issueHere', 'license:issue',
   'courses:list', 'courses:rescan', 'progress:update', 'media:readPdf',
   'quiz:get', 'quiz:submit', 'cert:get', 'print:page', 'print:pdf',
   'admin:users:list', 'admin:users:create', 'admin:users:update', 'admin:users:resetPassword', 'admin:users:setActive',

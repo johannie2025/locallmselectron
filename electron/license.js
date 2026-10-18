@@ -151,4 +151,29 @@ function evaluate({ machine, key, firstRun, lastSeen, trialDays = TRIAL_DAYS, no
   return { ...base, state: 'none', locked: true };
 }
 
-module.exports = { machineId, machineInfo, fingerprint, cleanPart, parseWmic, computeExpiry, parseKey, verifyKey, evaluate, PLAN_MONTHS, TRIAL_DAYS };
+/**
+ * Émet une clé pour un poste. La clé privée (PEM) n'est utilisée qu'en mémoire, le temps de la signature.
+ * Refuse une clé privée qui ne correspond pas à la clé publique intégrée (sinon on fabriquerait des clés invalides).
+ */
+function issueKey({ machine, plan, customer = '', start, privateKeyPem, publicKey = PUB }) {
+  if (!/^([0-9A-F]{4}-){4}[0-9A-F]{4}$/.test(String(machine || ''))) throw new Error('BAD_MACHINE_ID');
+  if (!PLAN_MONTHS[plan]) throw new Error('PLAN_UNKNOWN');
+  const day = start || new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error('DATE_INVALID');
+  const expires = computeExpiry(day, plan);
+  let priv;
+  try {
+    const pem = String(privateKeyPem || '').trim();
+    if (pem.length > 4000 || !/^-----BEGIN PRIVATE KEY-----[\s\S]+-----END PRIVATE KEY-----$/.test(pem)) throw new Error('x');
+    priv = crypto.createPrivateKey(pem);
+    if (priv.asymmetricKeyType !== 'ed25519') throw new Error('x');
+  } catch { throw new Error('PEM_INVALID'); }
+  const derive = (k) => (k && k.type === 'public' ? k : crypto.createPublicKey(k)).export({ type: 'spki', format: 'der' }).toString('base64');
+  if (derive(priv) !== derive(publicKey)) throw new Error('KEY_MISMATCH');
+  const payload = { v: 1, mid: machine, plan, customer: String(customer || '').slice(0, 80), issued: day, expires: expires.toISOString() };
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.sign(null, Buffer.from(body), priv).toString('base64url');
+  return { key: `WLS1.${body}.${sig}`, payload };
+}
+
+module.exports = { issueKey, machineId, machineInfo, fingerprint, cleanPart, parseWmic, computeExpiry, parseKey, verifyKey, evaluate, PLAN_MONTHS, TRIAL_DAYS };
