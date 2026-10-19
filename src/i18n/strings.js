@@ -412,6 +412,8 @@ export const ROWS = [
   ['net.badge.server', `Serveur`, `Server`, `Servidor`],
   ['net.badge.client', `Client`, `Client`, `Cliente`],
   ['sys.net', `Réseau`, `Network`, `Red`],
+  ['player.fullscreen', `Plein écran`, `Full screen`, `Pantalla completa`],
+  ['player.exitFullscreen', `Quitter le plein écran`, `Exit full screen`, `Salir de pantalla completa`],
   ['err.BAD_MACHINE_ID', `ID de poste invalide (format XXXX-XXXX-XXXX-XXXX-XXXX).`, `Invalid machine ID (format XXXX-XXXX-XXXX-XXXX-XXXX).`, `ID de equipo no válido (formato XXXX-XXXX-XXXX-XXXX-XXXX).`],
   ['err.PEM_INVALID', `Clé privée invalide : collez le fichier .pem complet (-----BEGIN PRIVATE KEY----- …).`, `Invalid private key: paste the complete .pem file (-----BEGIN PRIVATE KEY----- …).`, `Clave privada no válida: pegue el archivo .pem completo (-----BEGIN PRIVATE KEY----- …).`],
   ['err.KEY_MISMATCH', `Cette clé privée ne correspond pas à cette version de l'application.`, `This private key does not match this version of the application.`, `Esta clave privada no corresponde a esta versión de la aplicación.`],

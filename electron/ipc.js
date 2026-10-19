@@ -387,7 +387,7 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
   // Sortie contrôlée depuis l'écran de connexion / de licence : identifiants admin requis
   handle('auth:adminExit', null, async (username, password, maintenance) => {
     const role = await checkAdminCreds(username, password, ['admin', 'superadmin']);
-    quitApp(role === 'superadmin' && !!maintenance); return true; // le mode maintenance est réservé à Wise Design
+    quitApp(!!maintenance); return true; // mot de passe admin / superadmin vérifié ci-dessus
   });
 
   // ---------- Réseau local : serveur / clients ----------
@@ -799,7 +799,7 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
   // Sortie contrôlée (re-saisie du mot de passe admin) ; maintenance = lever les restrictions Windows
   handle('admin:exit', 'manager', async (password, maintenance) => {
     const role = await checkAdminCreds(cur().username, password, [cur().role]);
-    quitApp(role === 'superadmin' && !!maintenance); return true;
+    quitApp(!!maintenance); return true;
   });
 
   return {

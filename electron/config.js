@@ -5,8 +5,8 @@ const path = require('path');
 const DEFAULTS = {
   courseRoot: 'C:\\formations_wls',
   dataDir: null,       // défaut : C:\ProgramData\WiseDesignLMS (partagé entre comptes Windows) ; userData en dev
-  kiosk: 'auto',       // 'auto' : kiosque pour les comptes Windows standard, fenêtre normale pour les admins Windows ; true / false pour forcer
-  lockdown: 'auto',    // 'auto' : restrictions Windows pour les comptes standard ; 'always' ; 'off'
+  kiosk: true,         // kiosque pour TOUS les comptes Windows (standard et administrateur) ; false pour désactiver, 'auto' = standard seulement
+  lockdown: 'always',  // restrictions Windows pour tous les comptes (standard et administrateur) ; 'auto' = standard seulement ; 'off'
 };
 
 /**

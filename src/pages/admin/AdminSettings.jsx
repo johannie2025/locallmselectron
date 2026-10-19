@@ -184,7 +184,7 @@ function Exit({ user, sys }) {
       )}
       <p>{t('exit.help')}</p>
       <input className="input" type="password" value={p} onChange={(e) => setP(e.target.value)} placeholder={t('common.password')} />
-      {user.role === 'superadmin' && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={maint} onChange={(e) => setMaint(e.target.checked)} /> {t('exit.maintenance')}</label>}
+      {['admin','superadmin'].includes(user.role) && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={maint} onChange={(e) => setMaint(e.target.checked)} /> {t('exit.maintenance')}</label>}
       {err && <p className="text-rose-400 text-sm">{err}</p>}
       <button className="btn-danger" onClick={() => api('admin:exit', p, maint).catch((e) => setErr(errText(e, t)))}>⏻ {t('exit.quit')}</button>
     </div>

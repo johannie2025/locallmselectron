@@ -1,17 +1,20 @@
+import { createPortal } from 'react-dom';
 import { createContext, useCallback, useContext, useState } from 'react';
 import { useI18n } from '../i18n/index.jsx';
 
+/** Rendue dans <body> (portail) : un parent avec backdrop-filter (l'en-tête) ferait sinon de la fenêtre un élément « fixe » enfermé dans l'en-tête, derrière le contenu. */
 export function Modal({ title, onClose, children, wide }) {
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 backdrop-blur-sm p-4 no-print" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}>
-      <div className={`card w-full ${wide ? 'max-w-4xl' : 'max-w-md'} max-h-[90vh] overflow-auto animate-pop`}>
+  return createPortal(
+    <div className="fixed inset-0 z-[100] grid place-items-center bg-black/70 backdrop-blur-sm p-4 no-print" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}>
+      <div className={`card !bg-slate-900 w-full ${wide ? 'max-w-4xl' : 'max-w-md'} max-h-[90vh] overflow-auto animate-pop`}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold">{title}</h3>
           {onClose && <button className="text-slate-400 hover:text-white text-xl leading-none" onClick={onClose} aria-label="close">✕</button>}
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

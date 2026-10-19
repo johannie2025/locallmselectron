@@ -46,6 +46,7 @@
     "nsis": {
       "oneClick": false,
       "perMachine": true,
+      "runAfterFinish": true,
       "allowToChangeInstallationDirectory": true,
       "include": "build/installer.nsh",
       "shortcutName": "Wise Design Learning Systems",

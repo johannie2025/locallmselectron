@@ -137,10 +137,10 @@ test('mode serveur/client : jumelage, sessions séparées, médias en streaming,
   assert.ok((await clientA.state()).treeVersion > v1);
 
   // ---- sortie du kiosque d'un poste client : le serveur vérifie les comptes admin
-  assert.ok((await B.call('auth:adminExit', 'admin', 'Admin@1234', true)).ok); assert.deepStrictEqual(B.quits, [false], 'admin : pas de mode maintenance');
+  assert.ok((await B.call('auth:adminExit', 'admin', 'Admin@1234', true)).ok); assert.deepStrictEqual(B.quits, [true], 'admin : maintenance autorisée avec mot de passe');
   assert.strictEqual((await B.call('auth:adminExit', 'etu', 'secret1', false)).error, 'BAD_CREDENTIALS', 'un étudiant ne sort pas');
   assert.strictEqual((await B.call('auth:adminExit', 'admin', 'faux', false)).error, 'BAD_CREDENTIALS');
-  assert.ok((await B.call('auth:adminExit', 'superadmin', 'Super@1234', true)).ok); assert.deepStrictEqual(B.quits, [false, true]);
+  assert.ok((await B.call('auth:adminExit', 'superadmin', 'Super@1234', true)).ok); assert.deepStrictEqual(B.quits, [true, true]);
 
   // ---- révocation d'un poste
   const id = sStore.get().clients.find((c) => c.name === 'PC-02').id;

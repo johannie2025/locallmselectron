@@ -73,6 +73,26 @@ function Pdf({ item, onProgress }) {
   const [page, setPage] = useState(Math.max(1, Math.round(item.positionSec || 1)));
   const [err, setErr] = useState('');
   const maxPage = useRef(0);
+  const box = useRef(null);
+  const [fs, setFs] = useState(false);
+  const [vw, setVw] = useState([window.innerWidth, window.innerHeight]);
+  const toggleFs = () => { try { if (document.fullscreenElement) document.exitFullscreen(); else box.current?.requestFullscreen(); } catch { /* refusé */ } };
+  useEffect(() => {
+    const onFs = () => setFs(document.fullscreenElement === box.current);
+    const onSize = () => setVw([window.innerWidth, window.innerHeight]);
+    document.addEventListener('fullscreenchange', onFs);
+    window.addEventListener('resize', onSize);
+    return () => { document.removeEventListener('fullscreenchange', onFs); window.removeEventListener('resize', onSize); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); };
+  }, []);
+  // Navigation au clavier (utile en plein écran)
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'PageDown') setPage((p) => (doc ? Math.min(p + 1, doc.numPages) : p));
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') setPage((p) => Math.max(1, p - 1));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [doc]);
 
   useEffect(() => {
     let alive = true;
@@ -93,7 +113,7 @@ function Pdf({ item, onProgress }) {
       const pg = await doc.getPage(page);
       const base = pg.getViewport({ scale: 1 });
       const dpr = window.devicePixelRatio || 1;
-      const scale = Math.min((window.innerWidth - 80) / base.width, (window.innerHeight - 260) / base.height) * dpr;
+      const scale = (fs ? Math.min(vw[0] / base.width, (vw[1] - 64) / base.height) : Math.min((vw[0] - 80) / base.width, (vw[1] - 260) / base.height)) * dpr;
       const vp = pg.getViewport({ scale });
       const c = canvas.current;
       c.width = vp.width; c.height = vp.height;
@@ -104,16 +124,17 @@ function Pdf({ item, onProgress }) {
     maxPage.current = Math.max(maxPage.current, page);
     onProgress((maxPage.current / doc.numPages) * 100, page);
     return () => task?.cancel();
-  }, [doc, page]);
+  }, [doc, page, fs, vw]);
 
   if (err) return <p className="text-rose-400">{err}</p>;
   return (
-    <div className="flex flex-col items-center gap-3 h-full">
+    <div ref={box} className={`flex flex-col items-center gap-3 h-full ${fs ? 'justify-center bg-slate-950' : ''}`}>
       <canvas ref={canvas} className="bg-white rounded shadow" />
       <div className="flex items-center gap-4">
         <button className="btn-ghost" disabled={page <= 1} onClick={() => setPage(page - 1)}>◀</button>
         <span className="text-sm">{t('player.page', { a: page, b: doc?.numPages || '…' })}</span>
         <button className="btn-ghost" disabled={!doc || page >= doc.numPages} onClick={() => setPage(page + 1)}>▶</button>
+        <button className="btn-ghost" title={t(fs ? 'player.exitFullscreen' : 'player.fullscreen')} aria-label={t(fs ? 'player.exitFullscreen' : 'player.fullscreen')} onClick={toggleFs}>{fs ? '⤡' : '⛶'}</button>
       </div>
     </div>
   );

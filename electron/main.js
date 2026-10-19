@@ -182,7 +182,8 @@ else {
     session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*', 'ftp://*/*'] }, (d, cb) => {
       cb({ cancel: !(DEV_URL && d.url.startsWith(new URL(DEV_URL).origin)) });
     });
-    session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+    // Seul le plein écran HTML (lecteur vidéo, PDF) est autorisé ; caméra, micro, géolocalisation, notifications… restent refusés
+    session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'fullscreen'));
     // Aucun téléchargement possible (le bouton « télécharger » des lecteurs vidéo/audio est aussi masqué dans l'interface)
     session.defaultSession.on('will-download', (e) => e.preventDefault());
     if (app.isPackaged) {
@@ -242,9 +243,13 @@ function createWindow() {
   win.once('ready-to-show', () => win.show());
 
   // (2) Raccourcis bloqués au niveau de la page (Alt+F4 est de toute façon neutralisé par (3))
+  let htmlFullscreen = false; // plein écran d'une vidéo / d'un PDF : Échap doit pouvoir le quitter
+  win.webContents.on('enter-html-full-screen', () => { htmlFullscreen = true; });
+  win.webContents.on('leave-html-full-screen', () => { htmlFullscreen = false; });
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || !KIOSK) return;
     const k = (input.key || '').toLowerCase();
+    if (htmlFullscreen && k === 'escape') return;
     const ctrl = input.control || input.meta;
     const blocked =
       (input.alt && ['f4', 'arrowleft', 'arrowright', 'home'].includes(k)) ||

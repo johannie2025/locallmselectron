@@ -29,7 +29,7 @@ test('version portable : données et cours à côté de l\'exécutable, ni kiosq
     fs.unlinkSync(path.join(dir, 'lms-config.json'));
     delete process.env.PORTABLE_EXECUTABLE_DIR;
     c = loadConfig(app);
-    assert.strictEqual(c.portable, false); assert.strictEqual(c.kiosk, 'auto'); assert.strictEqual(c.courseRoot, 'C:\\formations_wls');
+    assert.strictEqual(c.portable, false); assert.strictEqual(c.kiosk, true); assert.strictEqual(c.courseRoot, 'C:\\formations_wls');
   } finally {
     for (const [k, v] of [['PORTABLE_EXECUTABLE_DIR', saved.P], ['LMS_CONFIG', saved.C]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }

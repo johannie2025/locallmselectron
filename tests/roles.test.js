@@ -101,10 +101,10 @@ test('permissions : chaque profil ne gère que les profils inférieurs', async (
   assert.strictEqual((await call('admin:users:delete', id('superadmin'))).error, 'SELF_FORBIDDEN');
 });
 
-test('sortie contrôlée : maintenance (levée des restrictions Windows) réservée au superadmin', async () => {
+test('sortie contrôlée : maintenance (levée des restrictions Windows) avec mot de passe admin ou superadmin', async () => {
   const { call } = boot();
   let r = await call('auth:adminExit', 'admin', 'Admin@1234', true);
-  assert.ok(r.ok); assert.strictEqual(boot.quit, false);
+  assert.ok(r.ok); assert.strictEqual(boot.quit, true);
   r = await call('auth:adminExit', 'superadmin', 'Super@1234', true);
   assert.ok(r.ok); assert.strictEqual(boot.quit, true);
 });
