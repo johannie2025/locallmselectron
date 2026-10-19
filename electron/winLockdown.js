@@ -45,7 +45,15 @@ async function isWindowsAdmin() {
   return out.includes('S-1-5-32-544');
 }
 
-const restartExplorer = () => run('taskkill', ['/f', '/im', 'explorer.exe']); // Windows relance le shell automatiquement
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const explorerRunning = async () => /explorer\.exe/i.test((await run('tasklist', ['/fi', 'IMAGENAME eq explorer.exe', '/fo', 'csv', '/nh'])).out);
+/** Redémarre le shell Windows (bureau, barre des tâches, menu Démarrer). Windows le relance en général seul ; sinon (bureau blanc) on le lance nous-mêmes, détaché de l'application. */
+async function restartExplorer() {
+  await run('taskkill', ['/f', '/im', 'explorer.exe']);
+  for (let i = 0; i < 6; i++) { await sleep(500); if (await explorerRunning()) return; }
+  const { spawn } = require('child_process');
+  try { spawn(process.env.SystemRoot ? path.join(process.env.SystemRoot, 'explorer.exe') : 'explorer.exe', [], { detached: true, stdio: 'ignore' }).unref(); } catch { /* ignoré */ }
+}
 
 /** mode : 'auto' (comptes standard seulement) | 'always' | 'off' (ou booléen false). */
 async function apply(dataDir, mode = 'auto', log = () => {}) {

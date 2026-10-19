@@ -128,6 +128,8 @@ else {
       quitApp: async (maintenance) => {
         if (maintenance) await winLockdown.revert(config.dataDir).catch((e) => log(`revert: ${e.message}`));
         allowQuit = true;
+        // Le bureau a été (re)lancé par revert() ; on laisse à explorer.exe le temps de s'installer avant de fermer l'application
+        if (maintenance && process.platform === 'win32') await new Promise((r) => setTimeout(r, 1500));
         if (SHELL && process.platform === 'win32') {
           // Sans explorer.exe le compte n'aurait plus d'écran : maintenance → on démarre le bureau Windows ; sinon → fermeture de session.
           if (maintenance) { try { spawn('explorer.exe', [], { detached: true, stdio: 'ignore' }).unref(); } catch (e) { log(`explorer: ${e.message}`); } app.quit(); }
