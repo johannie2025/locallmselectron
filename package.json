@@ -1,56 +1,19 @@
 {
-  "name": "wise-design-learning-systems",
-  "productName": "Wise Design Learning Systems",
-  "version": "1.3.0",
-  "description": "Wise Design Learning Systems — LMS 100 % hors-ligne pour centres de formation de langues",
-  "main": "electron/main.js",
-  "author": "Wise Design",
-  "license": "UNLICENSED",
+  "name": "agnes-video-wise-design",
+  "version": "1.0.0",
   "private": true,
+  "description": "Agnes Video Generator - Wise Design",
   "scripts": {
-    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 LMS_NO_KIOSK=1 electron .\"",
-    "build:web": "vite build",
-    "test": "node --test",
-    "dist": "vite build && electron-builder --win --x64 --publish never",
-    "postinstall": "electron-builder install-app-deps"
+    "build:css": "tailwindcss -i ./src/input.css -o ./www/styles.css --minify",
+    "build": "npm run build:css",
+    "sync": "npm run build && npx cap sync android"
   },
   "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.3.0"
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/cli": "^6.1.2",
+    "@capacitor/core": "^6.1.2"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.2",
-    "autoprefixer": "^10.4.20",
-    "concurrently": "^9.0.1",
-    "cross-env": "^7.0.3",
-    "electron": "^32.2.0",
-    "electron-builder": "^25.1.8",
-    "pdfjs-dist": "^4.6.82",
-    "postcss": "^8.4.47",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "tailwindcss": "^3.4.13",
-    "vite": "^5.4.8",
-    "wait-on": "^8.0.1"
-  },
-  "build": {
-    "appId": "com.wisedesign.wls",
-    "productName": "Wise Design Learning Systems",
-    "copyright": "Copyright © Wise Design — Intégrateur de Solutions & Automatisation IA",
-    "directories": { "output": "release", "buildResources": "build" },
-    "files": ["dist/**/*", "electron/**/*", "package.json"],
-    "extraResources": [{ "from": "scripts", "to": "scripts" }],
-    "asar": true,
-    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }] },
-    "portable": { "artifactName": "Wise-Design-Learning-Systems-Portable-${version}.${ext}" },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": true,
-      "runAfterFinish": true,
-      "allowToChangeInstallationDirectory": true,
-      "include": "build/installer.nsh",
-      "shortcutName": "Wise Design Learning Systems",
-      "artifactName": "Wise-Design-Learning-Systems-Setup-${version}.${ext}"
-    }
+    "tailwindcss": "^3.4.14"
   }
 }
