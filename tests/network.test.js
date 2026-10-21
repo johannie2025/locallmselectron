@@ -100,6 +100,16 @@ test('mode serveur/client : jumelage, sessions séparées, médias en streaming,
   const pdf = await B.call('media:readPdf', pdfId);
   assert.ok(pdf.ok && pdf.data instanceof Uint8Array && Buffer.from(pdf.data).toString() === '%PDF-1.4 test', 'les Buffers traversent le réseau');
 
+  // ---- leçons en séquence : la vidéo reste verrouillée (403) tant que la leçon précédente n'est pas terminée
+  const mod0 = view.courses[0].modules[0];
+  const vid = mod0.items.find((i) => i.type === 'video');
+  const before = mod0.items.slice(0, mod0.items.indexOf(vid)).filter((i) => i.required);
+  if (before.length) {
+    assert.strictEqual((await clientB.media(vid.id)).status, 403, 'leçon verrouillée');
+    assert.strictEqual((await B.call('progress:update', { itemId: vid.id, percent: 50, positionSec: 1 })).error, 'LESSON_LOCKED');
+    for (const p of before) assert.ok((await B.call('progress:update', { itemId: p.id, percent: 100, positionSec: 0 })).ok);
+  }
+
   // ---- streaming média avec Range (seek vidéo), contrôle d'inscription
   let m = await clientB.media('Anglais_A1/Module_01/intro.mp4', 'bytes=100-199');
   assert.strictEqual(m.status, 206); assert.strictEqual(m.headers.get('content-range'), 'bytes 100-199/1000'); assert.strictEqual(m.headers.get('content-type'), 'video/mp4');

@@ -1,6 +1,7 @@
 'use strict';
 /**
  * Règles de déblocage (Node pur, testable).
+ * Leçon N+1 d'un module ouverte ⇔ leçon N terminée (hors contenus non obligatoires).
  * Module N+1 déverrouillé ⇔ module N « terminé » (tous les contenus requis vus à 100 %
  * ET test réussi si un test existe) ET prérequis du manifest.json terminés.
  */
@@ -39,7 +40,9 @@ function buildView(tree, ctx) {
 
       mods.push({
         id: m.id, title: m.title, description: m.description, order: m.order,
-        items: m.items.map((i) => ({
+        items: m.items.map((i, idx) => ({
+          // Leçons en séquence : une leçon s'ouvre quand la précédente (obligatoire) est terminée ; formateurs/admins : tout ouvert
+          unlocked: isAdmin || m.items.slice(0, idx).every((p) => !p.required || progress.get(p.id)?.completed),
           id: i.id, type: i.type, title: i.title, size: i.size, viewable: i.viewable, required: i.required, order: i.order,
           percent: Math.round(progress.get(i.id)?.percent || 0),
           positionSec: progress.get(i.id)?.position_sec || 0,

@@ -82,7 +82,7 @@ function buildItems(moduleDir, root, manifest, warnings) {
       title: prettify(path.basename(abs)),
       relPath: rel,
       size,
-      viewable: type !== 'pptx',
+      viewable: true, // les .pptx sont convertis en PDF à l'ouverture (PowerPoint ou LibreOffice installé sur le poste)
       required: type !== 'pptx',
       _name: toPosix(path.relative(moduleDir, abs)),
     });

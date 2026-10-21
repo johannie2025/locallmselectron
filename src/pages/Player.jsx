@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { api } from '../api.js';
+import { api, errText } from '../api.js';
 import { useI18n } from '../i18n/index.jsx';
 import { useBrand } from '../brand/BrandProvider.jsx';
 
@@ -182,10 +182,26 @@ function Pdf({ item, onProgress }) {
   );
 }
 
+/** PowerPoint : converti en PDF par le poste (PowerPoint / LibreOffice) puis affiché comme un PDF. */
+function Pptx({ item, onProgress }) {
+  const { t } = useI18n();
+  const [pdf, setPdf] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let alive = true;
+    api('pptx:prepare', item.id).then((r) => alive && setPdf(r)).catch((e) => alive && setErr(errText(e, t)));
+    return () => { alive = false; };
+  }, [item.id]);
+  if (err) return <div className="card max-w-lg text-center text-amber-300">⚠ {err}</div>;
+  if (!pdf) return <div className="text-slate-300 animate-pulse">📊 {t('player.pptxConverting')}</div>;
+  return <Pdf item={{ ...item, id: pdf.id }} onProgress={onProgress} />;
+}
+
 export default function Player({ item, module, data, go }) {
   const { t } = useI18n();
   const allowSkip = !!data?.settings?.allowSkip;
-  const onProgress = (percent, positionSec) => api('progress:update', { itemId: item.id, percent, positionSec }).catch(() => {});
+  const [reached, setReached] = useState(!!item.completed);
+  const onProgress = (percent, positionSec) => { if (percent >= 98) setReached(true); return api('progress:update', { itemId: item.id, percent, positionSec }).catch(() => {}); };
   const idx = module.items.findIndex((i) => i.id === item.id);
   const next = module.items.slice(idx + 1).find((i) => i.viewable);
 
@@ -194,10 +210,10 @@ export default function Player({ item, module, data, go }) {
       <div className="flex items-center justify-between gap-3">
         <button className="btn-ghost" onClick={() => go({ name: 'dashboard' })}>← {t('app.back')}</button>
         <div className="font-medium truncate">{item.title}</div>
-        {next ? <button className="btn-primary" onClick={() => go({ name: 'player', item: next, module })}>{t('player.next')} ▶</button> : <span className="w-24" />}
+        {next ? <button className="btn-primary" disabled={!reached && !data?.isStaff && next.unlocked === false} onClick={() => go({ name: 'player', item: next, module })}>{t('player.next')} ▶</button> : <span className="w-24" />}
       </div>
       <div className="flex-1 min-h-0 grid place-items-center overflow-auto">
-        {item.type === 'pdf' ? <Pdf key={item.id} item={item} onProgress={onProgress} /> : <Media key={item.id} item={item} allowSkip={allowSkip} onProgress={onProgress} />}
+        {item.type === 'pdf' ? <Pdf key={item.id} item={item} onProgress={onProgress} /> : item.type === 'pptx' ? <Pptx key={item.id} item={item} onProgress={onProgress} /> : <Media key={item.id} item={item} allowSkip={allowSkip} onProgress={onProgress} />}
       </div>
     </div>
   );

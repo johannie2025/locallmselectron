@@ -26,6 +26,10 @@ const POLICIES = [
   [EXPLORER, 'NoControlPanel', 1],
   [EXPLORER, 'NoFolderOptions', 1],
   [EXPLORER, 'NoWinKeys', 1],
+  [EXPLORER, 'NoLogoff', 1],            // Ctrl+Alt+Suppr / menu Démarrer : pas de « Se déconnecter » (l'application a ses propres boutons)
+  [EXPLORER, 'NoClose', 1],             // pas d'« Arrêter » dans le menu Démarrer
+  [SYSTEM, 'DisableLockWorkstation', 1],
+  [SYSTEM, 'DisableChangePassword', 1],
   [SYSTEM, 'DisableTaskMgr', 1],
 ];
 const MARKER = `lockdown.${(() => { try { return require('os').userInfo().username; } catch { return 'user'; } })().replace(/[^\w.-]/g, '_')}.applied`; // un marqueur par compte Windows

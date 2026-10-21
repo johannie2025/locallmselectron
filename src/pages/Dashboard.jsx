@@ -95,10 +95,14 @@ export default function Dashboard({ data, go, user }) {
             <ul className="divide-y divide-slate-700">
               {m.items.map((it) => (
                 <li key={it.id} className="flex items-center justify-between py-2">
-                  <span>{ICON[it.type]} {it.title}{!it.viewable && <em className="text-xs text-amber-300 ml-2">({t('dash.pptxHint')})</em>}</span>
+                  {it.viewable && it.unlocked === false
+                    ? <span className="text-slate-500" title={t('dash.lessonLocked')}>🔒 {it.title}</span>
+                    : it.viewable
+                    ? <button className="text-left hover:text-brand hover:underline" onClick={() => go({ name: 'player', item: it, module: m })}>{ICON[it.type]} {it.title}</button>
+                    : <span>{ICON[it.type]} {it.title}<em className="text-xs text-amber-300 ml-2">({t('dash.pptxHint')})</em></span>}
                   <span className="flex items-center gap-3">
                     <span className="text-xs text-slate-400">{it.completed ? t('dash.done') : `${it.percent}%`}</span>
-                    {it.viewable && <button className="btn-ghost btn-sm" onClick={() => go({ name: 'player', item: it, module: m })}>{t('dash.open')}</button>}
+                    {it.viewable && it.unlocked !== false && <button className="btn-ghost btn-sm" onClick={() => go({ name: 'player', item: it, module: m })}>{t('dash.open')}</button>}
                   </span>
                 </li>
               ))}

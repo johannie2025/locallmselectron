@@ -57,6 +57,21 @@ let netServer = null; // mode serveur
 let logFile = null;
 let external = null; // { dock, children:Set, startedAt } pendant qu'une application externe (Word, Excel…) est ouverte
 const DOCK_HTML = (name) => `<!doctype html><meta charset="utf-8"><body style="margin:0;font:600 13px system-ui,sans-serif;background:#0f172a;color:#fff;display:flex;align-items:center;gap:10px;height:100vh;padding:0 10px;border:2px solid #38bdf8;box-sizing:border-box;-webkit-app-region:no-drag;user-select:none"><button onclick="dock.back()" style="cursor:pointer;background:#0ea5e9;color:#fff;border:0;border-radius:8px;padding:7px 12px;font:700 13px system-ui">◀ Wise Design Learning Systems</button><span style="opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${String(name).replace(/[<>&"]/g, '')}</span></body>`;
+// Garde-clavier Windows (touches Windows, Alt+Tab, Ctrl+Échap, barre des tâches masquée) : processus PowerShell caché, fermé avec l'application
+let keyGuard = null;
+function startKeyGuard(log) {
+  if (process.platform !== 'win32' || !app.isPackaged || keyGuard) return;
+  const script = path.join(process.resourcesPath, 'scripts', 'wls-keyguard.ps1');
+  if (!fs.existsSync(script)) return;
+  try {
+    const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    keyGuard = spawn(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script, '-ParentPid', String(process.pid)], { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
+    keyGuard.stderr.on('data', (d) => log(`keyguard: ${String(d).slice(0, 300)}`));
+    keyGuard.on('exit', () => { keyGuard = null; });
+  } catch (e) { log(`keyguard: ${e.message}`); }
+}
+function stopKeyGuard() { try { keyGuard?.stdin.end(); } catch { /* ignoré */ } keyGuard = null; }
+app.on('will-quit', stopKeyGuard);
 function enterExternal({ name, child }) {
   if (!KIOSK || !win || win.isDestroyed()) return; // fenêtre normale : les applications s'ouvrent simplement à côté
   topSuspended = true;
@@ -68,8 +83,7 @@ function enterExternal({ name, child }) {
     dock.setAlwaysOnTop(true, 'screen-saver');
     dock.on('close', (e) => { if (!allowQuit && external) e.preventDefault(); });
     external = { dock, children: new Set(), startedAt: Date.now() };
-    win.setAlwaysOnTop(false);
-    win.hide();
+    win.setAlwaysOnTop(false); // la fenêtre du kiosque reste affichée derrière l'application externe : le bureau Windows n'apparaît jamais
     dock.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(DOCK_HTML(name)));
     dock.once('ready-to-show', () => { const { workArea } = require('electron').screen.getPrimaryDisplay(); dock.setPosition(Math.round(workArea.x + workArea.width / 2 - 230), workArea.y + 4); dock.showInactive(); });
   }
@@ -89,7 +103,7 @@ function exitExternal() {
   external = null;
   try { dock.destroy(); } catch { /* déjà fermée */ }
   topSuspended = false;
-  if (win && !win.isDestroyed()) { win.show(); win.setAlwaysOnTop(true, 'screen-saver'); win.focus(); }
+  if (win && !win.isDestroyed()) { win.show(); win.setAlwaysOnTop(true, 'screen-saver'); win.setFullScreen(true); win.focus(); }
 }
 ipcMain.on('dock:back', (e) => { if (external && e.sender === external.dock.webContents) exitExternal(); });
 const log = (msg) => { try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`); } catch { /* ignoré */ } };
@@ -137,6 +151,7 @@ else {
       setOnTop: (on) => { topSuspended = !on; if (KIOSK && win && !win.isDestroyed()) win.setAlwaysOnTop(on, on ? 'screen-saver' : 'normal'); },
       quitApp: async (maintenance) => {
         allowQuit = true;
+        if (maintenance) stopKeyGuard();
         if (maintenance) { KIOSK = false; if (win && !win.isDestroyed()) { win.setAlwaysOnTop(false); win.setKiosk(false); } } // maintenance : plus de plein écran verrouillé
         if (maintenance) await winLockdown.openMaintenance(config.dataDir).catch((e) => log(`maintenance: ${e.message}`));
         // Le bureau a été (re)lancé par revert() ; on laisse à explorer.exe le temps de s'installer avant de fermer l'application
@@ -242,6 +257,7 @@ else {
 
     // Restrictions Windows pour le compte courant (tous les comptes par défaut ; 'auto' = comptes standard seulement)
     if (app.isPackaged) {
+      if (KIOSK) startKeyGuard(log);
       winLockdown.usbPolicy(false).catch(() => {}); // USB reverrouillé à chaque lancement (la maintenance précédente est terminée)
       winLockdown.apply(config.dataDir, config.lockdown, log).then((r) => log(`lockdown: ${JSON.stringify(r)}`)).catch((e) => log(`lockdown: ${e.message}`));
     }

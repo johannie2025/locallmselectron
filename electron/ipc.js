@@ -5,6 +5,7 @@ const path = require('path');
 const { ipcMain } = require('electron');
 const bcrypt = require('bcryptjs');
 const { scanRoot, MEDIA_EXT } = require('./courseScanner');
+const pptxConvert = require('./pptxConvert');
 const { buildView } = require('./gating');
 const quizEngine = require('./quizEngine');
 const license = require('./license');
@@ -52,6 +53,7 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
   let watcher = null;
   let watchedRoot = null;
   const itemIndex = new Map();
+  const itemModule = new Map(); // id d'item → module (pour l'ordre des leçons)
   const moduleIndex = new Map(); // moduleId -> { course, module }
   let licCache = null;
 
@@ -106,10 +108,10 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
          ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, fingerprint=excluded.fingerprint, scanned_at=excluded.scanned_at`
       ).run(JSON.stringify(t), t.fingerprint, t.scannedAt);
     }
-    itemIndex.clear(); moduleIndex.clear();
+    itemIndex.clear(); moduleIndex.clear(); itemModule.clear();
     for (const c of tree.courses) for (const m of c.modules) {
       moduleIndex.set(m.id, { course: c, module: m });
-      for (const it of m.items) itemIndex.set(it.id, it);
+      for (const it of m.items) { itemIndex.set(it.id, it); itemModule.set(it.id, m); }
     }
     startWatch();
     return tree;
@@ -188,8 +190,21 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     if (!r || r.startsWith('..') || path.isAbsolute(r)) return null;
     if (!MEDIA_EXT.has(path.extname(abs).toLowerCase())) return null;
     if (!isStaff(cur().role) && !allowedCourseIds(cur().id).has(toPosix(r).split('/')[0])) return null;
+    if (!isStaff(cur().role) && itemIndex.has(toPosix(r)) && !lessonUnlocked(toPosix(r))) return null;
     try { if (!fs.statSync(abs).isFile()) return null; } catch { return null; }
     return abs;
+  }
+
+  /** Leçons en séquence (étudiants) : une leçon n'est lisible que si les leçons obligatoires qui la précèdent dans le module sont terminées. */
+  function lessonUnlocked(itemId) {
+    if (isStaff(cur().role)) return true;
+    const m = itemModule.get(itemId);
+    if (!m) return true;
+    const idx = m.items.findIndex((i) => i.id === itemId);
+    const prev = m.items.slice(0, idx).filter((i) => i.required);
+    if (!prev.length) return true;
+    const done = new Set(db.prepare('SELECT item_id FROM progress WHERE user_id=? AND completed=1').all(cur().id).map((r) => r.item_id));
+    return prev.every((i) => done.has(i.id));
   }
 
   function resolveQuiz(moduleId, lang) {
@@ -493,6 +508,19 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     return { key, plan: payload.plan, expires: payload.expires, machine: payload.mid, activated: !!(activate && here) };
   });
 
+  // PowerPoint : conversion en PDF (PowerPoint ou LibreOffice), mise en cache ; renvoie le chemin relatif du PDF, servi ensuite comme un PDF ordinaire
+  handle('pptx:prepare', 'user', async (itemId) => {
+    getTree();
+    const it = itemIndex.get(String(itemId));
+    if (!it || it.type !== 'pptx') throw new Error('NOT_FOUND');
+    const root = getCourseRoot();
+    const abs = path.resolve(root, it.relPath);
+    if (!isStaff(cur().role) && !allowedCourseIds(cur().id).has(toPosix(it.relPath).split('/')[0])) throw new Error('FORBIDDEN');
+    if (!lessonUnlocked(it.id)) throw new Error('LESSON_LOCKED');
+    const pdf = await pptxConvert.convert(abs, { platform, log });
+    return { id: toPosix(path.relative(root, pdf)) };
+  });
+
   // ---------- Applications externes (Office, outils de dev…) choisies par le centre ----------
   const getApps = () => getSetting('apps', []);
   handle('apps:list', 'user', () => getApps().filter((a) => a.enabled && exists(a.path)).map(({ id, name, icon }) => ({ id, name, icon })));
@@ -531,6 +559,7 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     const it = itemIndex.get(itemId);
     if (!it) throw new Error('ITEM_UNKNOWN');
     if (!isStaff(cur().role) && !allowedCourseIds(cur().id).has(itemId.split('/')[0])) throw new Error('FORBIDDEN');
+    if (!lessonUnlocked(itemId)) throw new Error('LESSON_LOCKED');
     const pct = clamp(percent, 0, 100);
     db.prepare(
       `INSERT INTO progress(user_id,item_id,percent,position_sec,completed,updated_at) VALUES(?,?,?,?,?,?)

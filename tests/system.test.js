@@ -81,3 +81,18 @@ test('paquets Windows : cibles installeur + portable, scripts cybercafé cohére
   assert.ok(!/[^\x00-\x7f]/.test(read('scripts/wls-usb-policy.ps1')));
   assert.match(main, /session-end/);
 });
+
+test('PowerPoint : conversion PDF en cache, erreur claire sans convertisseur ; garde-clavier kiosque', async () => {
+  const os = require('os');
+  const { convert } = require('../electron/pptxConvert');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pptx-'));
+  const f = path.join(dir, 'cours.pptx'); fs.writeFileSync(f, 'x');
+  await assert.rejects(convert(f, { platform: 'linux' }), /PPTX_NO_CONVERTER/);
+  const st = fs.statSync(f);
+  fs.mkdirSync(path.join(dir, '.wls-cache'));
+  const cached = path.join(dir, '.wls-cache', `cours-${st.size}-${Math.round(st.mtimeMs)}.pdf`); fs.writeFileSync(cached, '%PDF');
+  assert.strictEqual(await convert(f, { platform: 'linux' }), cached, 'le PDF en cache est réutilisé');
+  const g = read('scripts/wls-keyguard.ps1');
+  assert.ok(!/[^\x00-\x7f]/.test(g) && g.includes('Shell_TrayWnd') && g.includes('0x5B') && g.includes('0x09'));
+  assert.ok(read('electron/main.js').includes('wls-keyguard.ps1'));
+});
