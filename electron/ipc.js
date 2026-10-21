@@ -428,10 +428,11 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
 
   // Poste : informations (compte Windows, mode kiosque/cybercafé/portable) et boutons d'alimentation (fermer la session, redémarrer, éteindre)
   handle('system:info', null, () => sysInfo());
-  handle('system:power', null, (action) => {
+  handle('system:power', null, async (action) => {
     if (!['logoff', 'restart', 'shutdown'].includes(action)) throw new Error('BAD_ACTION');
     log(`power ${action} (${cur() ? cur().username : 'sans session'})`);
-    return power(action);
+    if (!(await power(action))) throw new Error('POWER_FAILED');
+    return true;
   });
 
   // Personnalisation du centre (logo, nom, couleurs) — lisible avant connexion

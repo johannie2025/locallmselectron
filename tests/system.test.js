@@ -72,8 +72,12 @@ test('paquets Windows : cibles installeur + portable, scripts cybercafé cohére
   assert.ok(nsh.includes('resources\\scripts\\Mode-Cybercafe.cmd'));
   assert.ok(fs.existsSync(path.join(root, 'scripts', 'Mode-Cybercafe.cmd')));
   // en mode shell : quitter = fermer la session, maintenance = ouvrir explorer.exe
-  assert.ok(main.includes("spawn('explorer.exe'") && main.includes("['/l']"));
+  assert.ok(main.includes("spawn('explorer.exe'") && main.includes("'/l'"));
   // l'extinction ne doit pas être bloquée par la fermeture annulée du kiosque
-  assert.match(main, /power: \(action\) => \{[\s\S]*allowQuit = true/);
+  assert.match(main, /power: \(action\) => [\s\S]*allowQuit = true/);
+  // USB : tâche planifiée SYSTEM + script dans resources (non modifiable par les utilisateurs), drapeau côté application
+  assert.ok(nsh.includes('WLS-USB-Policy') && nsh.includes('wls-usb-policy.ps1'));
+  assert.ok(read('scripts/wls-usb-policy.ps1').includes('usb.unlock') && read('electron/winLockdown.js').includes('usb.unlock'));
+  assert.ok(!/[^\x00-\x7f]/.test(read('scripts/wls-usb-policy.ps1')));
   assert.match(main, /session-end/);
 });

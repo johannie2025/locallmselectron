@@ -20,6 +20,33 @@ function Media({ item, allowSkip, onProgress }) {
   const lastSent = useRef(0);
   const [playing, setPlaying] = useState(false);
   const isAudio = item.type === 'audio';
+  const [err, setErr] = useState(false);
+  const [boost, setBoost] = useState(100);      // 100 % = volume normal, jusqu'à 400 % (amplification type VLC)
+  const [comp, setComp] = useState(false);      // compresseur : rapproche les passages faibles et forts
+  const [showBoost, setShowBoost] = useState(false);
+  const fx = useRef(null);
+  // Chaîne Web Audio créée seulement à la première utilisation de l'amplificateur
+  useEffect(() => {
+    if ((boost === 100 && !comp) && !fx.current) return;
+    const el = ref.current;
+    if (!el) return;
+    try {
+      if (!fx.current) {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const src = ctx.createMediaElementSource(el);
+        const gain = ctx.createGain();
+        const dyn = ctx.createDynamicsCompressor();
+        fx.current = { ctx, src, gain, dyn };
+      }
+      const { ctx, src, gain, dyn } = fx.current;
+      src.disconnect(); gain.disconnect(); dyn.disconnect();
+      gain.gain.value = boost / 100;
+      if (comp) { dyn.threshold.value = -40; dyn.knee.value = 24; dyn.ratio.value = 8; dyn.attack.value = 0.003; dyn.release.value = 0.25; src.connect(dyn); dyn.connect(gain); } else src.connect(gain);
+      gain.connect(ctx.destination);
+      if (ctx.state === 'suspended') ctx.resume();
+    } catch { /* non disponible : volume normal */ }
+  }, [boost, comp]);
+  useEffect(() => () => { try { fx.current?.ctx.close(); } catch { /* ignoré */ } }, []);
 
   const send = (force) => {
     const v = ref.current;
@@ -32,7 +59,7 @@ function Media({ item, allowSkip, onProgress }) {
   useEffect(() => () => send(true), []); // sauvegarde en quittant
 
   const props = {
-    ref, src: mediaUrl(item.id), controls: true, autoPlay: true, ...LOCKED,
+    ref, crossOrigin: 'anonymous', src: mediaUrl(item.id), controls: true, onError: () => setErr(true), autoPlay: true, ...LOCKED,
     onLoadedMetadata: (e) => {
       const pos = item.positionSec || 0;
       if (pos > 0 && pos < e.target.duration - 2) { e.target.currentTime = pos; maxRef.current = pos; }
@@ -48,7 +75,21 @@ function Media({ item, allowSkip, onProgress }) {
     onPause: () => { setPlaying(false); send(true); },
   };
 
-  if (!isAudio) return <video {...props} className="max-h-full max-w-full bg-black rounded-lg" />;
+  const boostBar = (
+    <div className="relative flex justify-center mt-2">
+      <button className="btn-ghost btn-sm" onClick={() => setShowBoost(!showBoost)} title={t('player.boost')}>🔊 {boost}%{comp ? ' · C' : ''}</button>
+      {showBoost && (
+        <div className="absolute bottom-full mb-2 z-20 rounded-xl border border-white/10 bg-slate-900 shadow-xl p-3 text-sm w-72 space-y-2 animate-pop">
+          <div className="flex justify-between"><span>{t('player.boost')}</span><b>{boost}%</b></div>
+          <input type="range" min="100" max="400" step="10" value={boost} onChange={(e) => setBoost(+e.target.value)} className="w-full" />
+          <label className="flex items-center gap-2"><input type="checkbox" checked={comp} onChange={(e) => setComp(e.target.checked)} /> {t('player.compress')}</label>
+          <button className="btn-ghost btn-sm" onClick={() => { setBoost(100); setComp(false); }}>{t('player.boostReset')}</button>
+        </div>
+      )}
+    </div>
+  );
+  const errBox = err && <div className="mt-2 text-center text-sm text-amber-300">⚠ {t('player.codecError')}</div>;
+  if (!isAudio) return <div className="flex flex-col h-full w-full items-center justify-center min-h-0"><video {...props} className="max-h-[calc(100%-4rem)] max-w-full bg-black rounded-lg" />{errBox}{boostBar}</div>;
   return (
     <div className="card w-full max-w-xl text-center space-y-5 bg-slate-900/70">
       <span className="logo-badge"><img src={brand.logoSrc} alt="" className="h-14 w-auto" /></span>
@@ -60,6 +101,7 @@ function Media({ item, allowSkip, onProgress }) {
         ))}
       </div>
       <audio {...props} className="w-full" />
+      {errBox}{boostBar}
       <style>{'@keyframes eq{from{transform:scaleY(.25)}to{transform:scaleY(1)}}'}</style>
       <p className="sr-only">{t('player.next')}</p>
     </div>

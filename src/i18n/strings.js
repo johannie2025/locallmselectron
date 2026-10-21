@@ -162,7 +162,7 @@ export const ROWS = [
   ['set.rescan', `Re-scanner les cours`, `Rescan courses`, `Volver a analizar los cursos`],
   ['set.rescanned', `Cours re-scannés.`, `Courses rescanned.`, `Cursos analizados de nuevo.`],
   ['exit.help', `Quitter l'application. Ressaisissez votre mot de passe administrateur.`, `Exit the application. Re-enter your administrator password.`, `Salir de la aplicación. Vuelva a introducir su contraseña de administrador.`],
-  ['exit.maintenance', `Mode maintenance : lever aussi les restrictions Windows (explorateur, Exécuter, gestionnaire des tâches)`, `Maintenance mode: also lift the Windows restrictions (explorer, Run, task manager)`, `Modo mantenimiento: levantar también las restricciones de Windows (explorador, Ejecutar, administrador de tareas)`],
+  ['exit.maintenance', `Mode maintenance : désactive le kiosque, lève les restrictions Windows, ouvre l'Explorateur (gestionnaire des tâches, Exécuter…) et autorise les clés USB`, `Maintenance mode: turns off kiosk, lifts Windows restrictions, opens File Explorer (task manager, Run…) and allows USB drives`, `Modo mantenimiento: desactiva el kiosco, levanta las restricciones de Windows, abre el Explorador (administrador de tareas, Ejecutar…) y permite USB`],
   ['exit.quit', `Quitter l'application`, `Exit the application`, `Salir de la aplicación`],
 
   // ---- Utilisateurs, classes, inscriptions ----
@@ -374,6 +374,7 @@ export const ROWS = [
   ['err.BAD_ADDRESS', `Adresse du serveur invalide (exemple : 192.168.1.10 ou 192.168.1.10:47800).`, `Invalid server address (example: 192.168.1.10 or 192.168.1.10:47800).`, `Dirección del servidor no válida (ejemplo: 192.168.1.10 o 192.168.1.10:47800).`],
   ['err.BAD_MODE', `Mode réseau invalide.`, `Invalid network mode.`, `Modo de red no válido.`],
   ['err.BAD_PORT', `Port invalide (entre 1024 et 65535).`, `Invalid port (1024 to 65535).`, `Puerto no válido (entre 1024 y 65535).`],
+  ['err.POWER_FAILED', `Action impossible sur ce poste (droits Windows insuffisants). Voir le journal.`, `Action not possible on this PC (insufficient Windows rights). See the log.`, `Acción imposible en este equipo (permisos de Windows insuficientes). Vea el registro.`],
   ['err.NET_NOT_SERVER', `Ce poste n'est pas en mode serveur.`, `This PC is not in server mode.`, `Este equipo no está en modo servidor.`],
   ['err.TOO_BIG', `Données trop volumineuses.`, `Data too large.`, `Datos demasiado grandes.`],
   ['err.BAD_REQUEST', `Requête invalide.`, `Invalid request.`, `Solicitud no válida.`],
@@ -414,6 +415,10 @@ export const ROWS = [
   ['sys.net', `Réseau`, `Network`, `Red`],
   ['player.fullscreen', `Plein écran`, `Full screen`, `Pantalla completa`],
   ['player.exitFullscreen', `Quitter le plein écran`, `Exit full screen`, `Salir de pantalla completa`],
+  ['player.boost', `Amplificateur de volume`, `Volume booster`, `Amplificador de volumen`],
+  ['player.compress', `Compresseur (égalise les voix faibles et fortes)`, `Compressor (evens out quiet and loud parts)`, `Compresor (iguala partes suaves y fuertes)`],
+  ['player.boostReset', `Rétablir le volume normal`, `Reset to normal volume`, `Restablecer volumen normal`],
+  ['player.codecError', `Cette vidéo ne peut pas être lue (codec non pris en charge, ex. H.265/HEVC). Convertissez-la en MP4 H.264 + AAC.`, `This video cannot be played (unsupported codec, e.g. H.265/HEVC). Convert it to MP4 H.264 + AAC.`, `Este vídeo no se puede reproducir (códec no compatible, p. ej. H.265/HEVC). Conviértalo a MP4 H.264 + AAC.`],
   ['err.BAD_MACHINE_ID', `ID de poste invalide (format XXXX-XXXX-XXXX-XXXX-XXXX).`, `Invalid machine ID (format XXXX-XXXX-XXXX-XXXX-XXXX).`, `ID de equipo no válido (formato XXXX-XXXX-XXXX-XXXX-XXXX).`],
   ['err.PEM_INVALID', `Clé privée invalide : collez le fichier .pem complet (-----BEGIN PRIVATE KEY----- …).`, `Invalid private key: paste the complete .pem file (-----BEGIN PRIVATE KEY----- …).`, `Clave privada no válida: pegue el archivo .pem completo (-----BEGIN PRIVATE KEY----- …).`],
   ['err.KEY_MISMATCH', `Cette clé privée ne correspond pas à cette version de l'application.`, `This private key does not match this version of the application.`, `Esta clave privada no corresponde a esta versión de la aplicación.`],

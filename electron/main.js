@@ -45,7 +45,7 @@ const MIME = {
 // Schémas privilégiés : doivent être déclarés AVANT app.ready
 protocol.registerSchemesAsPrivileged([
   { scheme: 'lms-app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
-  { scheme: 'lms-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+  { scheme: 'lms-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }, // corsEnabled : nécessaire à l'amplificateur de volume (Web Audio)
 ]);
 
 let win = null;
@@ -111,6 +111,16 @@ else {
     else if (config.kiosk === false) KIOSK = false;
     else if (config.kiosk === 'auto' && app.isPackaged && process.platform === 'win32') KIOSK = !(await winLockdown.isWindowsAdmin());
 
+    // Sauvegarde quotidienne de la base (comptes, centres, progression) avant toute ouverture : protège contre une mauvaise mise à jour
+    try {
+      const dbFile = path.join(config.dataDir, 'lms.sqlite');
+      if (fs.existsSync(dbFile)) {
+        const bdir = path.join(config.dataDir, 'backups'); fs.mkdirSync(bdir, { recursive: true });
+        const dest = path.join(bdir, `lms-${new Date().toISOString().slice(0, 10)}.sqlite`);
+        if (!fs.existsSync(dest)) fs.copyFileSync(dbFile, dest);
+        fs.readdirSync(bdir).filter((f) => /^lms-.*\.sqlite$/.test(f)).sort().slice(0, -7).forEach((f) => { try { fs.unlinkSync(path.join(bdir, f)); } catch { /* ignoré */ } });
+      }
+    } catch (e) { log(`backup: ${e.message}`); }
     const db = openDb(path.join(config.dataDir, 'lms.sqlite'));
     // Réseau local : le mode (autonome / serveur / client) est choisi par le super-administrateur (Paramètres > Réseau)
     const netStore = createNetStore(config.dataDir);
@@ -126,8 +136,9 @@ else {
       getWindow: () => win,
       setOnTop: (on) => { topSuspended = !on; if (KIOSK && win && !win.isDestroyed()) win.setAlwaysOnTop(on, on ? 'screen-saver' : 'normal'); },
       quitApp: async (maintenance) => {
-        if (maintenance) await winLockdown.revert(config.dataDir).catch((e) => log(`revert: ${e.message}`));
         allowQuit = true;
+        if (maintenance) { KIOSK = false; if (win && !win.isDestroyed()) { win.setAlwaysOnTop(false); win.setKiosk(false); } } // maintenance : plus de plein écran verrouillé
+        if (maintenance) await winLockdown.openMaintenance(config.dataDir).catch((e) => log(`maintenance: ${e.message}`));
         // Le bureau a été (re)lancé par revert() ; on laisse à explorer.exe le temps de s'installer avant de fermer l'application
         if (maintenance && process.platform === 'win32') await new Promise((r) => setTimeout(r, 1500));
         if (SHELL && process.platform === 'win32') {
@@ -139,13 +150,25 @@ else {
         app.quit();
       },
       sysInfo: () => ({ platform: process.platform, shell: SHELL, kiosk: KIOSK, portable: !!config.portable, netMode: netClient ? 'client' : netStore.get().mode, netServer: netClient ? netStore.get().server : '', winUser: (() => { try { return os.userInfo().username; } catch { return ''; } })(), version: app.getVersion() }),
-      power: (action) => {
-        if (process.platform !== 'win32') return false;
+      power: (action) => new Promise((resolve) => {
+        if (process.platform !== 'win32') return resolve(false);
         allowQuit = true; // sinon la fermeture annulée par le kiosque ferait apparaître « cette application empêche l'arrêt »
-        const args = { logoff: ['/l'], restart: ['/r', '/t', '0'], shutdown: ['/s', '/t', '0'] }[action];
-        execFile('shutdown', args, { windowsHide: true }, (err) => { if (err) { allowQuit = false; log(`power ${action}: ${err.message}`); } });
-        return true;
-      },
+        const sys32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+        const shutdownExe = path.join(sys32, 'shutdown.exe');
+        // Essais successifs : shutdown.exe (chemin absolu), puis logoff.exe / PowerShell
+        const tries = {
+          logoff: [[shutdownExe, ['/l', '/f']], [path.join(sys32, 'logoff.exe'), []]],
+          restart: [[shutdownExe, ['/r', '/f', '/t', '0']], [path.join(sys32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-Command', 'Restart-Computer -Force']]],
+          shutdown: [[shutdownExe, ['/s', '/f', '/t', '0']], [path.join(sys32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-Command', 'Stop-Computer -Force']]],
+        }[action];
+        const attempt = (i) => {
+          if (i >= tries.length) { allowQuit = false; return resolve(false); }
+          execFile(tries[i][0], tries[i][1], { windowsHide: true }, (err) => {
+            if (err) { log(`power ${action} (${path.basename(tries[i][0])}): ${err.message}`); attempt(i + 1); } else resolve(true);
+          });
+        };
+        attempt(0);
+      }),
     });
 
     Menu.setApplicationMenu(null); // supprime les accélérateurs par défaut (Ctrl+R, Ctrl+Shift+I…)
@@ -172,11 +195,14 @@ else {
         const rel = decodeURIComponent(new URL(req.url).pathname).replace(/^\/+/, '');
         if (netClient) { // mode client : flux depuis le serveur (Range transmis, le serveur contrôle l'inscription)
           const r = await netClient.media(rel, req.headers.get('range'));
-          return new Response(r.body, { status: r.status, headers: r.headers });
+          const h = new Headers(r.headers); h.set('Access-Control-Allow-Origin', '*');
+          return new Response(r.body, { status: r.status, headers: h });
         }
         const abs = services.resolveMedia(rel);
         if (!abs) return new Response('Forbidden', { status: 403 });
-        return await net.fetch(pathToFileURL(abs).toString(), { headers: req.headers, bypassCustomProtocolHandlers: true });
+        const r = await net.fetch(pathToFileURL(abs).toString(), { headers: req.headers, bypassCustomProtocolHandlers: true });
+        const h = new Headers(r.headers); h.set('Access-Control-Allow-Origin', '*');
+        return new Response(r.body, { status: r.status, statusText: r.statusText, headers: h });
       } catch (e) { log(`media: ${e.message}`); return new Response('Error', { status: 500 }); }
     });
 
@@ -214,8 +240,9 @@ else {
       }, 15000);
     }
 
-    // Restrictions Windows pour le compte courant (comptes standard seulement en mode 'auto')
+    // Restrictions Windows pour le compte courant (tous les comptes par défaut ; 'auto' = comptes standard seulement)
     if (app.isPackaged) {
+      winLockdown.usbPolicy(false).catch(() => {}); // USB reverrouillé à chaque lancement (la maintenance précédente est terminée)
       winLockdown.apply(config.dataDir, config.lockdown, log).then((r) => log(`lockdown: ${JSON.stringify(r)}`)).catch((e) => log(`lockdown: ${e.message}`));
     }
   });

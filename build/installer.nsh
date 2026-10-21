@@ -10,6 +10,10 @@
   WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Services\USBSTOR" "Start" 4
   WriteRegDWORD HKLM "SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices" "Deny_All" 1
 
+  ; 2b) Tâche planifiée SYSTEM : maintient le blocage USB, ou le lève tant que le drapeau « usb.unlock » existe (créé par l'application quand un admin coche « maintenance »)
+  nsExec::ExecToLog 'schtasks /Delete /TN "WLS-USB-Policy" /F'
+  nsExec::ExecToLog 'schtasks /Create /TN "WLS-USB-Policy" /SC MINUTE /MO 1 /RU SYSTEM /RL HIGHEST /F /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"$INSTDIR\resources\scripts\wls-usb-policy.ps1\""'
+
   ; 3) Dossiers de travail : cours + données partagées entre comptes Windows
   CreateDirectory "C:\formations_wls"
   CreateDirectory "C:\formations_wls\_branding"
@@ -30,6 +34,7 @@
 !macro customUnInstall
   SetRegView 64
   DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "WiseDesignLearningSystems"
+  nsExec::ExecToLog 'schtasks /Delete /TN "WLS-USB-Policy" /F'
   ; Réautorise le stockage USB
   WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Services\USBSTOR" "Start" 3
   DeleteRegValue HKLM "SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices" "Deny_All"

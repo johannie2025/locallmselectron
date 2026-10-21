@@ -28,7 +28,7 @@ const POLICIES = [
   [EXPLORER, 'NoWinKeys', 1],
   [SYSTEM, 'DisableTaskMgr', 1],
 ];
-const MARKER = 'lockdown.applied';
+const MARKER = `lockdown.${(() => { try { return require('os').userInfo().username; } catch { return 'user'; } })().replace(/[^\w.-]/g, '_')}.applied`; // un marqueur par compte Windows
 
 const run = (cmd, args) =>
   new Promise((resolve) => execFile(cmd, args, { windowsHide: true, timeout: 20000 }, (err, out) => resolve({ err, out: String(out || '') })));
@@ -79,6 +79,21 @@ async function revert(dataDir) {
   await restartExplorer();
 }
 
+/** Politique USB (tâche planifiée SYSTEM posée par l'installeur : scripts/wls-usb-policy.ps1). Drapeau présent = USB autorisé (maintenance). */
+const usbFlag = () => path.join(process.env.ProgramData || 'C:\\ProgramData', 'WiseDesignLMS', 'usb.unlock');
+async function usbPolicy(unlock) {
+  if (process.platform !== 'win32') return;
+  try { if (unlock) { fs.mkdirSync(path.dirname(usbFlag()), { recursive: true }); fs.writeFileSync(usbFlag(), new Date().toISOString()); } else fs.unlinkSync(usbFlag()); } catch { /* ignoré */ }
+  await run('schtasks', ['/Run', '/TN', 'WLS-USB-Policy']); // applique tout de suite (sinon, au plus tard dans la minute)
+}
+
+/** Maintenance : lève les restrictions du compte, autorise l'USB, relance le bureau et ouvre l'Explorateur de fichiers. */
+async function openMaintenance(dataDir) {
+  await usbPolicy(true);
+  await revert(dataDir);                 // supprime les stratégies (lecteurs, Exécuter, Panneau de config, Gestionnaire des tâches…) + relance explorer.exe
+  try { require('child_process').spawn('explorer.exe', ['shell:MyComputerFolder'], { detached: true, stdio: 'ignore' }).unref(); } catch { /* ignoré */ }
+}
+
 const isApplied = (dataDir) => fs.existsSync(path.join(dataDir, MARKER));
 
-module.exports = { apply, revert, isApplied, isWindowsAdmin, POLICIES };
+module.exports = { apply, revert, usbPolicy, openMaintenance, isApplied, isWindowsAdmin, POLICIES };

@@ -17,8 +17,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VIDEO_EXT = new Set(['.mp4', '.webm', '.m4v']);
-const AUDIO_EXT = new Set(['.mp3', '.wav', '.ogg', '.oga', '.m4a', '.aac', '.opus']);
+const VIDEO_EXT = new Set(['.mp4', '.webm', '.m4v', '.mov', '.mkv', '.ogv']);
+const AUDIO_EXT = new Set(['.mp3', '.wav', '.ogg', '.oga', '.m4a', '.aac', '.opus', '.flac']);
+const UNSUPPORTED_EXT = new Set(['.avi', '.wmv', '.flv', '.mpg', '.mpeg', '.3gp', '.ts', '.wma']); // listés dans les avertissements : à convertir en .mp4 (H.264)
 const PDF_EXT = new Set(['.pdf']);
 const PPT_EXT = new Set(['.pptx', '.ppt']);
 const IGNORED = /^(\.|~\$|thumbs\.db$|desktop\.ini$|\$recycle)/i;
@@ -64,13 +65,13 @@ function buildItems(moduleDir, root, manifest, warnings) {
   const lower = new Map(files.map((f) => [f.toLowerCase(), f]));
   let items = [];
   for (const abs of files) {
-    const ext = path.extname(abs).toLowerCase();
+    const ext = path.extname(abs).trim().toLowerCase();
     let type = null;
     if (VIDEO_EXT.has(ext)) type = 'video';
     else if (AUDIO_EXT.has(ext)) type = 'audio';
     else if (PDF_EXT.has(ext)) type = 'pdf';
     else if (PPT_EXT.has(ext)) type = 'pptx';
-    if (!type) continue;
+    if (!type) { if (UNSUPPORTED_EXT.has(ext)) warnings.push(`Format non lisible (à convertir en .mp4 H.264) : ${toPosix(path.relative(root, abs))}`); continue; }
     if (type === 'pptx' && lower.has(abs.slice(0, -ext.length).toLowerCase() + '.pdf')) continue; // PDF équivalent
     let size = 0;
     try { size = fs.statSync(abs).size; } catch { /* ignoré */ }

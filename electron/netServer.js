@@ -10,7 +10,7 @@ const path = require('path');
 const { pipeline } = require('stream');
 const { encode } = require('./netCodec');
 
-const MIME = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.pdf': 'application/pdf' };
+const MIME = { '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/mp4', '.mkv': 'video/x-matroska', '.ogv': 'video/ogg', '.flac': 'audio/flac', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.pdf': 'application/pdf' };
 const MAX_BODY = 8 * 1024 * 1024; // logo en data-URL ≤ 4 Mo, quiz…
 
 function readBody(req) {
