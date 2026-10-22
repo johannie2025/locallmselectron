@@ -76,7 +76,16 @@ function buildItems(moduleDir, root, manifest, warnings) {
     let size = 0;
     try { size = fs.statSync(abs).size; } catch { /* ignoré */ }
     const rel = toPosix(path.relative(root, abs));
+    // Test de la leçon : <nom du fichier>.quiz.json à côté du contenu (ex. intro.mp4 + intro.quiz.json)
+    const qAbs = lower.get(abs.slice(0, -ext.length).toLowerCase() + '.quiz.json');
+    let quizFile = null; let quizPassingScore = null;
+    if (qAbs) {
+      quizFile = toPosix(path.relative(root, qAbs));
+      const qd = readJson(qAbs, warnings);
+      if (qd && typeof qd.passingScore === 'number') quizPassingScore = qd.passingScore;
+    }
     items.push({
+      quizFile, quizPassingScore,
       id: rel,
       type,
       title: prettify(path.basename(abs)),

@@ -120,6 +120,7 @@ test('clé de maintenance : signature, expiration, durée max, falsification, ha
   assert.ok(nsh.includes('Winlogon') && nsh.includes('--shell') && nsh.includes('explorer.exe'), 'bureau remplacé puis rétabli');
   for (const f of ['scripts/wls-usb-policy.ps1', 'scripts/Identifier-Ma-Cle.ps1', 'scripts/Identifier-Ma-Cle.cmd', 'scripts/Restaurer-Bureau.cmd', 'scripts/allowed-usb.txt']) assert.ok(!/[^\x00-\x7f]/.test(read(f)), `${f} en ASCII`);
   const ps = read('scripts/wls-usb-policy.ps1');
+  assert.ok(ps.includes('Winlogon') && ps.includes('explorer.exe'), 'maintenance : bureau restauré par la tâche SYSTEM');
   assert.ok(ps.includes("--verify-maintenance") && ps.includes('sys') && ps.includes('S-1-5-32-545:(OI)(CI)RX') && ps.includes('sha256'));
   assert.ok(read('electron/main.js').includes('--verify-maintenance') && read('electron/main.js').includes('maintenance.on'));
 });

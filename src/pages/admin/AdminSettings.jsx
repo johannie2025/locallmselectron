@@ -12,6 +12,10 @@ function Branding() {
   const brand = useBrand();
   const [name, setName] = useState(brand.centerName || '');
   const [slogan, setSlogan] = useState(brand.slogan || '');
+  const [address, setAddress] = useState(brand.address || '');
+  const [phone, setPhone] = useState(brand.phone || '');
+  const [email, setEmail] = useState(brand.email || '');
+  const [website, setWebsite] = useState(brand.website || '');
   const [primary, setPrimary] = useState(brand.primary || '#2563eb');
   const [secondary, setSecondary] = useState(brand.secondary || '#0ea5e9');
 
@@ -32,7 +36,7 @@ function Branding() {
     r.readAsDataURL(f);
   };
   const save = async () => {
-    try { await api('admin:branding:set', { centerName: name, slogan, primary, secondary }); await brand.reload(); toast(t('common.saved')); }
+    try { await api('admin:branding:set', { centerName: name, slogan, primary, secondary, address, phone, email, website }); await brand.reload(); toast(t('common.saved')); }
     catch (e) { toast(errText(e, t), 'err'); }
   };
   return (
@@ -41,6 +45,12 @@ function Branding() {
         <h3 className="font-semibold">{t('brand.identity')}</h3>
         <div><label className="label">{t('brand.centerName')}</label><input className="input" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} placeholder="Wise Design Learning Systems" /></div>
         <div><label className="label">{t('brand.slogan')}</label><input className="input" value={slogan} maxLength={140} onChange={(e) => setSlogan(e.target.value)} /></div>
+        <div><label className="label">{t('brand.address')}</label><input className="input" value={address} maxLength={160} onChange={(e) => setAddress(e.target.value)} /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className="label">{t('brand.phone')}</label><input className="input" value={phone} maxLength={60} onChange={(e) => setPhone(e.target.value)} /></div>
+          <div><label className="label">{t('brand.email')}</label><input className="input" value={email} maxLength={80} onChange={(e) => setEmail(e.target.value)} /></div>
+        </div>
+        <div><label className="label">{t('brand.website')}</label><input className="input" value={website} maxLength={80} onChange={(e) => setWebsite(e.target.value)} /></div>
         <div>
           <label className="label">{t('brand.logo')}</label>
           <div className="flex items-center gap-4">

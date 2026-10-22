@@ -24,21 +24,32 @@ export function PrintOverlay({ onClose, fileName, children, canPrint = true }) {
   );
 }
 
+/** Contacts du centre (adresse · téléphone · e-mail · site), séparés par « · » */
+function useContacts() {
+  const { address, phone, email, website } = useBrand();
+  return [address, phone, email, website].filter(Boolean).join('  ·  ');
+}
+
 function SheetHeader({ title }) {
   const { logoSrc, name, slogan } = useBrand();
+  const contacts = useContacts();
   return (
     <div className="flex items-center justify-between border-b-2 pb-3 mb-5" style={{ borderColor: 'rgb(var(--brand))' }}>
       <div className="flex items-center gap-3">
         <img src={logoSrc} alt="" className="h-14 w-auto" />
-        <div><div className="text-xl font-bold" style={{ color: 'rgb(var(--brand))' }}>{name}</div>{slogan && <div className="text-xs text-slate-500">{slogan}</div>}</div>
+        <div><div className="text-xl font-bold" style={{ color: 'rgb(var(--brand))' }}>{name}</div>{slogan && <div className="text-xs text-slate-500">{slogan}</div>}{contacts && <div className="text-[11px] text-slate-500 mt-0.5">{contacts}</div>}</div>
       </div>
       <div className="text-right text-lg font-semibold text-slate-700">{title}</div>
     </div>
   );
 }
-const SheetFooter = () => (
-  <div className="mt-8 pt-2 border-t text-[10px] text-slate-400 text-center">{APP_NAME} · © {new Date().getFullYear()} {COMPANY}</div>
-);
+const SheetFooter = () => {
+  const { name } = useBrand();
+  const contacts = useContacts();
+  return (
+    <div className="mt-8 pt-2 border-t text-[10px] text-slate-400 text-center">{name}{contacts ? ` — ${contacts}` : ''}<br />{APP_NAME} · © {new Date().getFullYear()} {COMPANY}</div>
+  );
+};
 
 /** Relevé de notes d'un étudiant (A4 portrait) */
 export function Transcript({ data }) {
@@ -89,12 +100,14 @@ export function Transcript({ data }) {
 export function Certificate({ data }) {
   const { t, fmtDate } = useI18n();
   const { logoSrc, name, slogan } = useBrand();
+  const contacts = useContacts();
   return (
     <div className="sheet sheet-cert bg-white text-slate-900 mx-auto max-w-[1050px] shadow-2xl p-6" style={{ minHeight: '700px' }}>
       <div className="h-full p-10 text-center flex flex-col items-center" style={{ border: '8px double rgb(var(--brand))', minHeight: '650px' }}>
         <img src={logoSrc} alt="" className="h-20 w-auto mb-2" />
         <div className="text-lg font-semibold" style={{ color: 'rgb(var(--brand))' }}>{name}</div>
         {slogan && <div className="text-xs text-slate-500">{slogan}</div>}
+        {contacts && <div className="text-[11px] text-slate-500">{contacts}</div>}
         <h1 className="font-serif text-5xl mt-8 tracking-wide" style={{ color: 'rgb(var(--brand))' }}>{t('doc.certTitle')}</h1>
         <p className="mt-8 text-lg text-slate-600">{t('doc.certIntro')}</p>
         <div className="font-serif text-4xl mt-3 border-b-2 px-10 pb-1" style={{ borderColor: 'rgb(var(--accent))' }}>{data.student.fullName}</div>
@@ -106,7 +119,7 @@ export function Certificate({ data }) {
           <div className="text-slate-500 text-xs">n° {data.number}<br />{fmtDate(data.issuedAt)}</div>
           <div className="border-t border-slate-400 pt-1 w-56">{t('doc.directionSign')}</div>
         </div>
-        <div className="text-[10px] text-slate-400 mt-4">{APP_NAME} · © {new Date().getFullYear()} {COMPANY}</div>
+        <div className="text-[10px] text-slate-400 mt-4">{name} · {APP_NAME} · © {new Date().getFullYear()} {COMPANY}</div>
       </div>
     </div>
   );

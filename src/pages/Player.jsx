@@ -201,6 +201,8 @@ export default function Player({ item, module, data, go }) {
   const { t } = useI18n();
   const allowSkip = !!data?.settings?.allowSkip;
   const [reached, setReached] = useState(!!item.completed);
+  const hasQuiz = !!item.quiz;
+  const quizPassed = !hasQuiz || !!item.quiz.passed;
   const onProgress = (percent, positionSec) => { if (percent >= 98) setReached(true); return api('progress:update', { itemId: item.id, percent, positionSec }).catch(() => {}); };
   const idx = module.items.findIndex((i) => i.id === item.id);
   const next = module.items.slice(idx + 1).find((i) => i.viewable);
@@ -210,7 +212,8 @@ export default function Player({ item, module, data, go }) {
       <div className="flex items-center justify-between gap-3">
         <button className="btn-ghost" onClick={() => go({ name: 'dashboard' })}>← {t('app.back')}</button>
         <div className="font-medium truncate">{item.title}</div>
-        {next ? <button className="btn-primary" disabled={!reached && !data?.isStaff && next.unlocked === false} onClick={() => go({ name: 'player', item: next, module })}>{t('player.next')} ▶</button> : <span className="w-24" />}
+        {hasQuiz && !quizPassed && (reached || !item.required) && <button className="btn-primary" onClick={() => go({ name: 'quiz', moduleId: `lq:${item.id}` })}>📝 {t('dash.takeLessonTest')}</button>}
+        {next && (quizPassed || next.unlocked === true) ? <button className="btn-primary" disabled={!reached && !data?.isStaff && next.unlocked === false} onClick={() => go({ name: 'player', item: next, module })}>{t('player.next')} ▶</button> : <span className="w-24" />}
       </div>
       <div className="flex-1 min-h-0 grid place-items-center overflow-auto">
         {item.type === 'pdf' ? <Pdf key={item.id} item={item} onProgress={onProgress} /> : item.type === 'pptx' ? <Pptx key={item.id} item={item} onProgress={onProgress} /> : <Media key={item.id} item={item} allowSkip={allowSkip} onProgress={onProgress} />}

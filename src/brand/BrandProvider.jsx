@@ -4,7 +4,7 @@ import { APP_NAME } from '../brand.js';
 import wiseLogo from '../assets/wise-design-logo.jpg';
 
 const Ctx = createContext(null);
-const EMPTY = { centerName: '', slogan: '', primary: '', secondary: '', logo: null, loginBg: null, appBg: null };
+const EMPTY = { centerName: '', slogan: '', address: '', phone: '', email: '', website: '', primary: '', secondary: '', logo: null, loginBg: null, appBg: null };
 
 const hexToRgb = (hex) => { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
 const darken = ([r, g, b], f = 0.78) => [Math.round(r * f), Math.round(g * f), Math.round(b * f)];

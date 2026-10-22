@@ -102,6 +102,12 @@ export default function Dashboard({ data, go, user }) {
                     : <span>{ICON[it.type]} {it.title}<em className="text-xs text-amber-300 ml-2">({t('dash.pptxHint')})</em></span>}
                   <span className="flex items-center gap-3">
                     <span className="text-xs text-slate-400">{it.completed ? t('dash.done') : `${it.percent}%`}</span>
+                    {it.quiz && (
+                      <span className="text-xs">{it.quiz.passed ? <span className="text-emerald-300">✅ {it.quiz.bestScore}%</span> : <span className="text-amber-300">📝 {t('dash.lessonTest', { n: it.quiz.passingScore })}</span>}</span>
+                    )}
+                    {it.quiz && it.unlocked !== false && (it.completed || !it.required) && !it.quiz.passed && (
+                      <button className="btn-primary btn-sm" onClick={() => go({ name: 'quiz', moduleId: `lq:${it.id}` })}>{t('dash.takeLessonTest')}</button>
+                    )}
                     {it.viewable && it.unlocked !== false && <button className="btn-ghost btn-sm" onClick={() => go({ name: 'player', item: it, module: m })}>{t('dash.open')}</button>}
                   </span>
                 </li>

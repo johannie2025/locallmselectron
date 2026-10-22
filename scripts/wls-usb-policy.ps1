@@ -65,6 +65,11 @@ try {
   }
 } catch { }
 
+# ---- 2b) bureau Windows : en maintenance (cle ou mot de passe admin) = equivalent de Restaurer-Bureau.cmd ; sinon l'application redevient le shell ----
+$wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+if ($unlock) { Set-ItemProperty -Path $wl -Name Shell -Value 'explorer.exe' -Type String }
+elseif ($exe) { Set-ItemProperty -Path $wl -Name Shell -Value ('"' + $exe + '" --shell') -Type String }
+
 # ---- 3) mise a jour par la cle ----
 if ($maint -and $maint.payload.installer) {
   $ip = Join-Path $maint.dir $maint.payload.installer.name

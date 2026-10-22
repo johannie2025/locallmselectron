@@ -83,3 +83,27 @@ test('gating : quiz.json invalide → seuil par défaut (régression : seuil `fa
   const ok = buildView(t, { progress, quizBest: new Map([[m2full.id, { best: 10, attempts: 1 }]]), settings: { minScore: 80, autoQuiz: true } });
   assert.strictEqual(ok.courses[0].modules[1].quiz.passed, false, '10 % ne doit pas valider un seuil de 80 %');
 });
+
+test('gating : test de leçon (<leçon>.quiz.json) à réussir avant la leçon suivante, puis test final du module', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-'));
+  const touch = (p, c = 'x') => { fs.mkdirSync(path.dirname(path.join(root, p)), { recursive: true }); fs.writeFileSync(path.join(root, p), c); };
+  touch('C/M1/01-a.mp4'); touch('C/M1/01-a.quiz.json', JSON.stringify(QUIZ_TEMPLATE));
+  touch('C/M1/02-b.mp4'); touch('C/M1/quiz.json', JSON.stringify(QUIZ_TEMPLATE));
+  const t = scanRoot(root);
+  const [a, b] = t.courses[0].modules[0].items;
+  assert.ok(a.quizFile && !b.quizFile);
+  const settings = { minScore: 80, autoQuiz: false };
+  const done = (...its) => new Map(its.map((i) => [i.id, { percent: 100, completed: 1 }]));
+  const view = (progress, best = []) => buildView(t, { progress, quizBest: new Map(best), settings }).courses[0].modules[0];
+  let m = view(done(a));
+  assert.strictEqual(m.items[1].unlocked, false, 'leçon vue mais test non passé');
+  m = view(done(a), [[`lq:${a.id}`, { best: 60, attempts: 1 }]]);
+  assert.strictEqual(m.items[1].unlocked, false, 'test sous le seuil');
+  m = view(done(a), [[`lq:${a.id}`, { best: 90, attempts: 1 }]]);
+  assert.strictEqual(m.items[1].unlocked, true);
+  assert.strictEqual(m.completed, false);
+  m = view(done(a, b), [[`lq:${a.id}`, { best: 90, attempts: 1 }]]);
+  assert.strictEqual(m.completed, false, 'test final du module encore à passer');
+  m = view(done(a, b), [[`lq:${a.id}`, { best: 90, attempts: 1 }], [t.courses[0].modules[0].id, { best: 85, attempts: 1 }]]);
+  assert.strictEqual(m.completed, true);
+});

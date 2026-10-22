@@ -201,10 +201,34 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     const m = itemModule.get(itemId);
     if (!m) return true;
     const idx = m.items.findIndex((i) => i.id === itemId);
-    const prev = m.items.slice(0, idx).filter((i) => i.required);
+    const prev = m.items.slice(0, idx);
     if (!prev.length) return true;
     const done = new Set(db.prepare('SELECT item_id FROM progress WHERE user_id=? AND completed=1').all(cur().id).map((r) => r.item_id));
-    return prev.every((i) => done.has(i.id));
+    return prev.every((i) => (!i.required || done.has(i.id)) && (!i.quizFile || lessonQuizPassed(i, m)));
+  }
+  /** Test de leçon réussi ? (meilleure note ≥ seuil) */
+  function lessonQuizPassed(it, m) {
+    const e = moduleIndex.get(m.id);
+    const ps = it.quizPassingScore ?? m.minScore ?? e?.course.minScore ?? getSettings().minScore;
+    const r = db.prepare('SELECT MAX(score) best FROM quiz_results WHERE user_id=? AND module_id=?').get(cur().id, `lq:${it.id}`);
+    return r?.best != null && r.best >= ps;
+  }
+  /** Contexte d'un test de leçon (identifiant « lq:<id de la leçon> »), ou null pour un test de module. */
+  function lessonQuizCtx(id) {
+    if (!String(id).startsWith('lq:')) return null;
+    getTree();
+    const itemId = String(id).slice(3);
+    const it = itemIndex.get(itemId); const m = itemModule.get(itemId);
+    if (!it || !m || !it.quizFile) throw new Error('MODULE_UNKNOWN');
+    const course = moduleIndex.get(m.id).course;
+    const passingScore = it.quizPassingScore ?? m.minScore ?? course.minScore ?? getSettings().minScore;
+    if (!isStaff(cur().role)) {
+      if (!allowedCourseIds(cur().id).has(course.id) || !lessonUnlocked(itemId)) throw new Error('LESSON_LOCKED');
+      if (it.required && !db.prepare('SELECT 1 FROM progress WHERE user_id=? AND item_id=? AND completed=1').get(cur().id, itemId)) throw new Error('LESSON_LOCKED');
+    }
+    const r = quizEngine.readQuizFile(path.join(getCourseRoot(), it.quizFile));
+    if (!r.quiz) throw new Error('NO_QUIZ');
+    return { it, m, course, passingScore, quiz: r.quiz };
   }
 
   function resolveQuiz(moduleId, lang) {
@@ -463,6 +487,7 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     return {
       centerName: getSetting('center.name', ''), slogan: getSetting('center.slogan', ''),
       primary: getSetting('center.primary', ''), secondary: getSetting('center.secondary', ''),
+      address: getSetting('center.address', ''), phone: getSetting('center.phone', ''), email: getSetting('center.email', ''), website: getSetting('center.website', ''),
       logo: find('logo'), loginBg: find('login-bg'), appBg: find('app-bg'),
     };
   });
@@ -580,6 +605,8 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
 
   // Quiz (correction côté main uniquement)
   handle('quiz:get', 'user', (moduleId, lang) => {
+    const lc = lessonQuizCtx(moduleId);
+    if (lc) return { moduleId, title: lc.quiz.title || lc.it.title, source: 'lesson', passingScore: lc.passingScore, timeLimitSec: lc.quiz.timeLimitSec || null, questions: quizEngine.publicQuestions(lc.quiz) };
     const st = moduleState(moduleId);
     if (!isStaff(cur().role) && (!st.unlocked || !st.viewed)) throw new Error('MODULE_LOCKED');
     const r = resolveQuiz(moduleId, lang);
@@ -590,6 +617,20 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     };
   });
   handle('quiz:submit', 'user', (moduleId, answers, durationSec, lang) => {
+    const lc = lessonQuizCtx(moduleId);
+    if (lc) {
+      const { score, details } = quizEngine.grade(lc.quiz, answers);
+      const passed = score >= lc.passingScore;
+      db.prepare('INSERT INTO quiz_results(user_id,module_id,score,passed,answers_json,duration_sec,created_at) VALUES(?,?,?,?,?,?,?)')
+        .run(cur().id, moduleId, score, passed ? 1 : 0, JSON.stringify(answers || {}), Math.round(Number(durationSec) || 0), Date.now());
+      let certificate = false;
+      if (passed && cur().role === 'student') {
+        const before = db.prepare('SELECT COUNT(*) c FROM certificates WHERE user_id=?').get(cur().id).c;
+        ensureCertificates(cur().id);
+        certificate = db.prepare('SELECT COUNT(*) c FROM certificates WHERE user_id=?').get(cur().id).c > before;
+      }
+      return { score, passed, passingScore: lc.passingScore, details, certificate };
+    }
     const st = moduleState(moduleId);
     if (!isStaff(cur().role) && (!st.unlocked || !st.viewed)) throw new Error('MODULE_LOCKED');
     const r = resolveQuiz(moduleId, lang);
@@ -751,25 +792,40 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
   });
 
   // ---------- Admin : éditeur de quiz ----------
-  handle('admin:modules:list', 'staff', () => { getTree(); return [...moduleIndex.values()].map(({ course, module }) => ({ id: module.id, label: `${course.title} › ${module.title}` })); });
-  handle('admin:quiz:read', 'staff', (moduleId) => {
+  handle('admin:modules:list', 'staff', () => {
     getTree();
-    const e = moduleIndex.get(moduleId);
+    const out = [];
+    for (const { course, module } of moduleIndex.values()) {
+      out.push({ id: module.id, label: `${course.title} › ${module.title} — test final` });
+      for (const it of module.items) out.push({ id: `lq:${it.id}`, label: `${course.title} › ${module.title} › ${it.title} — test de la leçon` });
+    }
+    return out;
+  });
+  /** Fichier d'un test : quiz.json du module, ou <leçon>.quiz.json pour « lq:<leçon> » */
+  const quizTargetFile = (id) => {
+    getTree();
+    if (String(id).startsWith('lq:')) {
+      const it = itemIndex.get(String(id).slice(3));
+      if (!it) throw new Error('MODULE_UNKNOWN');
+      return path.join(getCourseRoot(), it.relPath).replace(/\.[^.\\/]+$/, '') + '.quiz.json';
+    }
+    const e = moduleIndex.get(id);
     if (!e) throw new Error('MODULE_UNKNOWN');
-    const f = path.join(e.module.absPath, 'quiz.json');
+    return path.join(e.module.absPath, 'quiz.json');
+  };
+  handle('admin:quiz:read', 'staff', (moduleId) => {
+    const f = quizTargetFile(moduleId);
     const blank = { version: 1, title: '', passingScore: getSettings().minScore, timeLimitSec: null, shuffleQuestions: false, questions: [] };
     if (!fs.existsSync(f)) return { exists: false, quiz: blank };
     try { return { exists: true, quiz: { ...blank, ...JSON.parse(fs.readFileSync(f, 'utf8').replace(/^﻿/, '')) } }; }
     catch (err) { return { exists: true, quiz: blank, broken: err.message }; }
   });
   handle('admin:quiz:save', 'staff', (moduleId, quiz) => {
-    getTree();
-    const e = moduleIndex.get(moduleId);
-    if (!e) throw new Error('MODULE_UNKNOWN');
+    const target = quizTargetFile(moduleId);
     const errors = quizEngine.validateQuiz(quiz);
     if (errors.length) return { saved: false, errors };
     const clean = { version: 1, title: String(quiz.title || ''), passingScore: quiz.passingScore ?? null, timeLimitSec: quiz.timeLimitSec || null, shuffleQuestions: !!quiz.shuffleQuestions, questions: quiz.questions };
-    fs.writeFileSync(path.join(e.module.absPath, 'quiz.json'), JSON.stringify(clean, null, 2), 'utf8');
+    fs.writeFileSync(target, JSON.stringify(clean, null, 2), 'utf8');
     tree = null;
     return { saved: true, errors: [] };
   });
@@ -778,12 +834,14 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
   handle('admin:stats:overview', 'staff', () => statsOverview());
   handle('admin:report:transcript', 'staff', (uid) => buildTranscript(uid));
   handle('admin:report:certificate', 'staff', (uid, courseId) => certificateData(uid, courseId));
+  const lessonLabel = (mid) => { if (!String(mid).startsWith('lq:')) return null; const it = itemIndex.get(String(mid).slice(3)); return it ? `Test : ${it.title}` : mid; };
+  const lessonCourse = (mid) => { if (!String(mid).startsWith('lq:')) return null; const m = itemModule.get(String(mid).slice(3)); return m ? moduleIndex.get(m.id)?.course.title || '' : ''; };
   const resultsRows = () => {
     getTree();
     return db.prepare(
       `SELECT q.id, u.username, u.full_name, c.name class_name, q.module_id, q.score, q.passed, q.duration_sec, q.created_at
        FROM quiz_results q JOIN users u ON u.id=q.user_id LEFT JOIN classes c ON c.id=u.class_id ORDER BY q.created_at DESC LIMIT 5000`
-    ).all().map((r) => ({ ...r, module: moduleIndex.get(r.module_id)?.module.title || r.module_id, course: moduleIndex.get(r.module_id)?.course.title || '' }));
+    ).all().map((r) => ({ ...r, module: lessonLabel(r.module_id) || moduleIndex.get(r.module_id)?.module.title || r.module_id, course: lessonCourse(r.module_id) || moduleIndex.get(r.module_id)?.course.title || '' }));
   };
   handle('admin:results:list', 'staff', () => resultsRows().slice(0, 1000));
   handle('admin:results:export', 'staff', (lang) => {
@@ -806,7 +864,11 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     if (s.allowSkip != null) setSetting('allowSkip', !!s.allowSkip);
     tree = null; return getSettings();
   });
-  handle('admin:branding:set', 'manager', ({ centerName, slogan, primary, secondary }) => {
+  handle('admin:branding:set', 'manager', ({ centerName, slogan, primary, secondary, address, phone, email, website }) => {
+    setSetting('center.address', String(address || '').trim().slice(0, 160));
+    setSetting('center.phone', String(phone || '').trim().slice(0, 60));
+    setSetting('center.email', String(email || '').trim().slice(0, 80));
+    setSetting('center.website', String(website || '').trim().slice(0, 80));
     setSetting('center.name', String(centerName || '').trim().slice(0, 80));
     setSetting('center.slogan', String(slogan || '').trim().slice(0, 140));
     setSetting('center.primary', HEX.test(primary || '') ? primary : '');
