@@ -52,8 +52,11 @@ async function isWindowsAdmin() {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const explorerRunning = async () => /explorer\.exe/i.test((await run('tasklist', ['/fi', 'IMAGENAME eq explorer.exe', '/fo', 'csv', '/nh'])).out);
 /** Redémarre le shell Windows (bureau, barre des tâches, menu Démarrer). Windows le relance en général seul ; sinon (bureau blanc) on le lance nous-mêmes, détaché de l'application. */
+let SHELL_MODE = false; // application = shell Windows : on ne relance jamais explorer.exe nous-mêmes (sauf maintenance)
+const setShell = (v) => { SHELL_MODE = !!v; };
 async function restartExplorer() {
   await run('taskkill', ['/f', '/im', 'explorer.exe']);
+  if (SHELL_MODE) return;
   for (let i = 0; i < 6; i++) { await sleep(500); if (await explorerRunning()) return; }
   const { spawn } = require('child_process');
   try { spawn(process.env.SystemRoot ? path.join(process.env.SystemRoot, 'explorer.exe') : 'explorer.exe', [], { detached: true, stdio: 'ignore' }).unref(); } catch { /* ignoré */ }
@@ -92,12 +95,13 @@ async function usbPolicy(unlock) {
 }
 
 /** Maintenance : lève les restrictions du compte, autorise l'USB, relance le bureau et ouvre l'Explorateur de fichiers. */
-async function openMaintenance(dataDir) {
-  await usbPolicy(true);
+async function openMaintenance(dataDir, { usb = true } = {}) {
+  if (usb) await usbPolicy(true);
+  SHELL_MODE = false;
   await revert(dataDir);                 // supprime les stratégies (lecteurs, Exécuter, Panneau de config, Gestionnaire des tâches…) + relance explorer.exe
   try { require('child_process').spawn('explorer.exe', ['shell:MyComputerFolder'], { detached: true, stdio: 'ignore' }).unref(); } catch { /* ignoré */ }
 }
 
 const isApplied = (dataDir) => fs.existsSync(path.join(dataDir, MARKER));
 
-module.exports = { apply, revert, usbPolicy, openMaintenance, isApplied, isWindowsAdmin, POLICIES };
+module.exports = { setShell, apply, revert, usbPolicy, openMaintenance, isApplied, isWindowsAdmin, POLICIES };

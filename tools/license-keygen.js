@@ -10,6 +10,10 @@
  *   node tools/license-keygen.js issue --machine XXXX-XXXX-XXXX-XXXX-XXXX --plan monthly|quarterly|semester|annual
  *        [--customer "Nom du centre"] [--start AAAA-MM-JJ] [--key chemin/privee.pem]
  *        Émet une clé de licence. Renouvellement : relancer avec --start = date d'expiration précédente.
+ *
+ *   node tools/license-keygen.js maintenance [--hours 24] [--installer chemin/Wise-Design-Learning-Systems-Setup-x.y.z.exe] [--out dossier]
+ *        Crée le dossier WLS-Maintenance (maintenance.json signé, valable pour TOUS les postes) à copier à la racine de la clé USB autorisée.
+ *        Avec --installer, l'installeur est copié et son hash signé : branché sur un poste, la clé installe la mise à jour toute seule.
  */
 const fs = require('fs');
 const path = require('path');
@@ -41,6 +45,24 @@ if (cmd === 'init') {
   let r;
   try { r = issueKey({ machine: mid, plan, customer: opt('customer', ''), start, privateKeyPem: fs.readFileSync(PRIV, 'utf8') }); } catch (e) { die(e.message); }
   console.log(`Poste : ${mid}\nPlan : ${plan}   Expire le : ${r.payload.expires.slice(0, 10)}\n\n${r.key}\n`);
+} else if (cmd === 'maintenance') {
+  const { issueToken } = require('../electron/maintenanceKey');
+  const hours = Number(opt('hours', 24));
+  const inst = opt('installer');
+  const out = path.resolve(opt('out', 'WLS-Maintenance'));
+  if (!fs.existsSync(PRIV)) die(`clé privée introuvable : ${PRIV}`);
+  let installer = null;
+  fs.mkdirSync(out, { recursive: true });
+  if (inst) {
+    if (!fs.existsSync(inst)) die(`installeur introuvable : ${inst}`);
+    const buf = fs.readFileSync(inst);
+    installer = { name: path.basename(inst), sha256: crypto.createHash('sha256').update(buf).digest('hex') };
+    fs.copyFileSync(inst, path.join(out, installer.name));
+  }
+  let r;
+  try { r = issueToken({ hours, installer, privateKeyPem: fs.readFileSync(PRIV, 'utf8') }); } catch (e) { die(e.message); }
+  fs.writeFileSync(path.join(out, 'maintenance.json'), r.token + '\n');
+  console.log(`Dossier : ${out}\nValable jusqu'au : ${r.payload.expires}${installer ? `\nMise à jour : ${installer.name} (${installer.sha256.slice(0, 12)}…)` : ''}\nCopiez ce dossier « WLS-Maintenance » à la racine de la clé USB autorisée.`);
 } else {
   console.log(fs.readFileSync(__filename, 'utf8').split('*/')[0].replace(/^[^]*?\/\*\*/, '').replace(/^ \* ?/gm, ''));
 }

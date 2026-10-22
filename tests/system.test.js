@@ -96,3 +96,30 @@ test('PowerPoint : conversion PDF en cache, erreur claire sans convertisseur ; g
   assert.ok(!/[^\x00-\x7f]/.test(g) && g.includes('Shell_TrayWnd') && g.includes('0x5B') && g.includes('0x09'));
   assert.ok(read('electron/main.js').includes('wls-keyguard.ps1'));
 });
+
+test('clé de maintenance : signature, expiration, durée max, falsification, hash installeur signé', () => {
+  const crypto = require('crypto');
+  const { issueToken, verifyToken } = require('../electron/maintenanceKey');
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const now = Date.parse('2026-10-21T12:00:00Z');
+  const { token, payload } = issueToken({ hours: 24, installer: { name: 'Setup.exe', sha256: 'AB'.repeat(32) }, privateKeyPem: pem, publicKey, now });
+  assert.strictEqual(payload.installer.sha256, 'ab'.repeat(32));
+  assert.ok(verifyToken(token, { publicKey, now: now + 3600e3 }).payload, 'valable pour tous les postes (aucun identifiant de poste)');
+  assert.strictEqual(verifyToken(token, { publicKey, now: now + 25 * 3600e3 }).error, 'TOKEN_EXPIRED');
+  const parts = token.split('.');
+  const forged = JSON.parse(Buffer.from(parts[1], 'base64url')); forged.expires = '2030-01-01T00:00:00.000Z';
+  assert.strictEqual(verifyToken(`WLM1.${Buffer.from(JSON.stringify(forged)).toString('base64url')}.${parts[2]}`, { publicKey, now }).error, 'TOKEN_INVALID');
+  assert.strictEqual(verifyToken('n importe quoi', { publicKey, now }).error, 'TOKEN_FORMAT');
+  const other = crypto.generateKeyPairSync('ed25519').publicKey;
+  assert.strictEqual(verifyToken(token, { publicKey: other, now }).error, 'TOKEN_INVALID', 'autre clé publique');
+  assert.throws(() => issueToken({ hours: 24 * 40, privateKeyPem: pem, publicKey }), /BAD_DURATION/);
+  assert.throws(() => issueToken({ hours: 1, privateKeyPem: crypto.generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }), publicKey }), /KEY_MISMATCH/);
+  // installeur : shell Winlogon, tâche SYSTEM, scripts ASCII, drapeau dans un dossier protégé
+  const nsh = read('build/installer.nsh');
+  assert.ok(nsh.includes('Winlogon') && nsh.includes('--shell') && nsh.includes('explorer.exe'), 'bureau remplacé puis rétabli');
+  for (const f of ['scripts/wls-usb-policy.ps1', 'scripts/Identifier-Ma-Cle.ps1', 'scripts/Identifier-Ma-Cle.cmd', 'scripts/Restaurer-Bureau.cmd', 'scripts/allowed-usb.txt']) assert.ok(!/[^\x00-\x7f]/.test(read(f)), `${f} en ASCII`);
+  const ps = read('scripts/wls-usb-policy.ps1');
+  assert.ok(ps.includes("--verify-maintenance") && ps.includes('sys') && ps.includes('S-1-5-32-545:(OI)(CI)RX') && ps.includes('sha256'));
+  assert.ok(read('electron/main.js').includes('--verify-maintenance') && read('electron/main.js').includes('maintenance.on'));
+});

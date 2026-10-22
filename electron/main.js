@@ -108,7 +108,22 @@ function exitExternal() {
 ipcMain.on('dock:back', (e) => { if (external && e.sender === external.dock.webContents) exitExternal(); });
 const log = (msg) => { try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`); } catch { /* ignoré */ } };
 
-if (!app.requestSingleInstanceLock()) { app.quit(); }
+// Vérification d'une clé de maintenance (appelée par la tâche planifiée SYSTEM) : code de sortie 0 = valide
+const VERIFY_AT = process.argv.indexOf('--verify-maintenance');
+const maintenanceFlagFile = () => path.join(process.env.ProgramData || 'C:\\ProgramData', 'WiseDesignLMS', 'sys', 'maintenance.on');
+/** Maintenance par clé USB active ? (drapeau posé par la tâche SYSTEM dans un dossier non modifiable par les utilisateurs) */
+function maintenanceActive() {
+  try { return Date.parse(fs.readFileSync(maintenanceFlagFile(), 'utf8').trim()) > Date.now(); } catch { return false; }
+}
+let maintenanceMode = false;
+if (VERIFY_AT > 0) {
+  app.disableHardwareAcceleration();
+  app.whenReady().then(() => {
+    let code = 1;
+    try { code = require('./maintenanceKey').verifyToken(fs.readFileSync(process.argv[VERIFY_AT + 1], 'utf8')).payload ? 0 : 1; } catch { code = 1; }
+    app.exit(code);
+  });
+} else if (!app.requestSingleInstanceLock()) { app.quit(); }
 else {
   app.on('second-instance', () => { if (win) { win.show(); win.focus(); } });
 
@@ -135,6 +150,8 @@ else {
         fs.readdirSync(bdir).filter((f) => /^lms-.*\.sqlite$/.test(f)).sort().slice(0, -7).forEach((f) => { try { fs.unlinkSync(path.join(bdir, f)); } catch { /* ignoré */ } });
       }
     } catch (e) { log(`backup: ${e.message}`); }
+    if (SHELL) winLockdown.setShell(true);
+    if (maintenanceActive()) { maintenanceMode = true; KIOSK = false; } // clé de maintenance branchée au démarrage : pas de kiosque
     const db = openDb(path.join(config.dataDir, 'lms.sqlite'));
     // Réseau local : le mode (autonome / serveur / client) est choisi par le super-administrateur (Paramètres > Réseau)
     const netStore = createNetStore(config.dataDir);
@@ -256,7 +273,21 @@ else {
     }
 
     // Restrictions Windows pour le compte courant (tous les comptes par défaut ; 'auto' = comptes standard seulement)
+    // Clé de maintenance : surveille le drapeau posé par la tâche SYSTEM → déverrouille tout ; retrait de la clé → reverrouille tout (relance en kiosque)
     if (app.isPackaged) {
+      if (maintenanceMode) winLockdown.openMaintenance(config.dataDir, { usb: false }).catch((e) => log(`maintenance: ${e.message}`));
+      setInterval(() => {
+        const active = maintenanceActive();
+        if (active && !maintenanceMode) {
+          maintenanceMode = true; KIOSK = false; stopKeyGuard(); log('maintenance par clé USB : déverrouillage');
+          if (win && !win.isDestroyed()) { win.setAlwaysOnTop(false); win.setKiosk(false); win.setFullScreen(false); win.minimize(); }
+          winLockdown.openMaintenance(config.dataDir, { usb: false }).catch((e) => log(`maintenance: ${e.message}`));
+        } else if (!active && maintenanceMode) {
+          log('clé de maintenance retirée : reverrouillage'); allowQuit = true; app.relaunch(); app.exit(0);
+        }
+      }, 3000);
+    }
+    if (app.isPackaged && !maintenanceMode) {
       if (KIOSK) startKeyGuard(log);
       winLockdown.usbPolicy(false).catch(() => {}); // USB reverrouillé à chaque lancement (la maintenance précédente est terminée)
       winLockdown.apply(config.dataDir, config.lockdown, log).then((r) => log(`lockdown: ${JSON.stringify(r)}`)).catch((e) => log(`lockdown: ${e.message}`));

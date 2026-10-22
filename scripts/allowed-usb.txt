@@ -1,0 +1,5 @@
+# Cles USB AUTORISEES (une par ligne). Tout autre peripherique de stockage USB est bloque.
+# Obtenez les identifiants avec Identifier-Ma-Cle.cmd (cle branchee sur un PC non verrouille), collez-les ici, puis recompilez l'installeur.
+# Exemple :
+# USBSTOR\DiskKingston_DataTraveler_3.0_PMAP
+# USB\VID_0951&PID_1666

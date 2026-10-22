@@ -6,13 +6,17 @@
   ; 1) Démarrage automatique à l'ouverture de session Windows (tous les utilisateurs)
   WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "WiseDesignLearningSystems" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}"'
 
-  ; 2) Blocage des périphériques de stockage USB (clavier/souris non concernés). Redémarrage conseillé.
-  WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Services\USBSTOR" "Start" 4
-  WriteRegDWORD HKLM "SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices" "Deny_All" 1
+  ; 1b) Le kiosque REMPLACE le bureau Windows pour tous les comptes : aucune vue du bureau avant le lancement (shell Winlogon = l'application).
+  ;      Rétabli à la désinstallation ; secours : scripts\Restaurer-Bureau.cmd. Les comptes en mode cybercafé par utilisateur (HKCU) gardent la priorité.
+  WriteRegStr HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" "Shell" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --shell'
+
+  ; 2) Blocage des clés USB de stockage (clavier/souris non concernés) : appliqué par la tâche planifiée ci-dessous (clés listées dans allowed-usb.txt exceptées)
 
   ; 2b) Tâche planifiée SYSTEM : maintient le blocage USB, ou le lève tant que le drapeau « usb.unlock » existe (créé par l'application quand un admin coche « maintenance »)
   nsExec::ExecToLog 'schtasks /Delete /TN "WLS-USB-Policy" /F'
   nsExec::ExecToLog 'schtasks /Create /TN "WLS-USB-Policy" /SC MINUTE /MO 1 /RU SYSTEM /RL HIGHEST /F /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"$INSTDIR\resources\scripts\wls-usb-policy.ps1\""'
+
+  nsExec::ExecToLog 'schtasks /Run /TN "WLS-USB-Policy"'
 
   ; 3) Dossiers de travail : cours + données partagées entre comptes Windows
   CreateDirectory "C:\formations_wls"
@@ -34,6 +38,9 @@
 !macro customUnInstall
   SetRegView 64
   DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "WiseDesignLearningSystems"
+  ; Rend le bureau Windows
+  WriteRegStr HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" "Shell" "explorer.exe"
+  DeleteRegKey HKLM "SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions"
   nsExec::ExecToLog 'schtasks /Delete /TN "WLS-USB-Policy" /F'
   ; Réautorise le stockage USB
   WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Services\USBSTOR" "Start" 3
