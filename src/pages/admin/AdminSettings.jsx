@@ -4,6 +4,7 @@ import { useI18n } from '../../i18n/index.jsx';
 import { useBrand, extractPalette } from '../../brand/BrandProvider.jsx';
 import { useUi } from '../../components/ui.jsx';
 import LicenseIssuer from '../../components/LicenseIssuer.jsx';
+import MaintenanceKeyMaker from '../../components/MaintenanceKeyMaker.jsx';
 import AdminNetwork from './AdminNetwork.jsx';
 
 function Branding() {
@@ -170,6 +171,7 @@ function License({ lic, onLicense, user }) {
         <textarea className="input font-mono text-xs h-28" value={key} onChange={(e) => setKey(e.target.value)} placeholder={t('lic.keyPlaceholder')} />
         <button className="btn-primary" onClick={async () => { try { await api('license:activate', key); setKey(''); toast(t('lic.activated')); onLicense(); } catch (e) { toast(errText(e, t), 'err'); } }}>🔑 {t('lic.activate')}</button>
       </div>
+      {user.role === 'superadmin' && <div className="card lg:col-span-2"><MaintenanceKeyMaker /></div>}
       {user.role === 'superadmin' && <div className="card lg:col-span-2"><LicenseIssuer mode="session" machineId={lic.machineId} onDone={onLicense} /></div>}
     </div>
   );

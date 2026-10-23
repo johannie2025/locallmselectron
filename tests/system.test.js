@@ -122,5 +122,9 @@ test('clé de maintenance : signature, expiration, durée max, falsification, ha
   const ps = read('scripts/wls-usb-policy.ps1');
   assert.ok(ps.includes('Winlogon') && ps.includes('explorer.exe'), 'maintenance : bureau restauré par la tâche SYSTEM');
   assert.ok(ps.includes("--verify-maintenance") && ps.includes('sys') && ps.includes('S-1-5-32-545:(OI)(CI)RX') && ps.includes('sha256'));
+  const allowed = read('scripts/allowed-usb.txt').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  assert.ok(allowed.length > 0 && allowed.every((l) => !/Gen/i.test(l) && l !== 'USBSTOR\\Disk'), 'aucun identifiant générique (autoriserait toutes les clés)');
+  assert.ok(ps.includes('AllowInstanceIDs') && ps.includes("-notmatch 'Gen'"));
+  assert.ok(read('electron/ipc.js').includes("handle('maintenance:create', 'super'"));
   assert.ok(read('electron/main.js').includes('--verify-maintenance') && read('electron/main.js').includes('maintenance.on'));
 });

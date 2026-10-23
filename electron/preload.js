@@ -6,7 +6,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const CHANNELS = new Set([
   'auth:login', 'auth:logout', 'auth:me', 'auth:changePassword', 'auth:setLang', 'auth:adminExit',
   'branding:get', 'apps:list', 'apps:launch', 'admin:apps:get', 'admin:apps:save', 'net:getConfig', 'net:setMode', 'net:newPairCode', 'net:revokeClient', 'net:pair', 'net:restart', 'system:info', 'system:power', 'license:status', 'license:activate', 'license:issueHere', 'license:issue',
-  'courses:list', 'courses:rescan', 'pptx:prepare', 'progress:update', 'media:readPdf',
+  'courses:list', 'courses:rescan', 'pptx:prepare', 'maintenance:create', 'progress:update', 'media:readPdf',
   'quiz:get', 'quiz:submit', 'cert:get', 'print:page', 'print:pdf',
   'admin:users:list', 'admin:users:create', 'admin:users:update', 'admin:users:resetPassword', 'admin:users:setActive',
   'admin:users:resetProgress', 'admin:users:delete',

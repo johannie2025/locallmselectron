@@ -45,7 +45,13 @@ $restr = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions'
 $classes = @('{4d36e967-e325-11ce-bfc1-08002be10318}', '{53f56307-b6bf-11d0-94f2-00a0c91efb8b}')  # disques / volumes
 $allowFile = Join-Path $PSScriptRoot 'allowed-usb.txt'
 $allowed = @()
-if (Test-Path $allowFile) { $allowed = @(Get-Content $allowFile | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') }) }
+$allowedInst = @()
+if (Test-Path $allowFile) {
+  $lines = @(Get-Content $allowFile | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
+  $allowedInst = @($lines | Where-Object { $_ -like 'instance:*' } | ForEach-Object { $_.Substring(9) })
+  # les identifiants generiques autoriseraient toutes les cles : ignores
+  $allowed = @($lines | Where-Object { ($_ -notlike 'instance:*') -and ($_ -notmatch 'Gen') -and ($_ -ne 'USBSTOR\Disk') })
+}
 try {
   Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR' -Name Start -Value 3 -Type DWord
   Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices' -Name Deny_All
@@ -60,6 +66,9 @@ try {
     $k = Join-Path $restr 'DenyDeviceClasses'; New-Item -Path $k -Force | Out-Null
     for ($i = 0; $i -lt $classes.Count; $i++) { Set-ItemProperty -Path $k -Name ([string]($i + 1)) -Value $classes[$i] -Type String }
     Set-ItemProperty -Path $restr -Name AllowDeviceIDs -Value ([int]($allowed.Count -gt 0)) -Type DWord
+    Set-ItemProperty -Path $restr -Name AllowInstanceIDs -Value ([int]($allowedInst.Count -gt 0)) -Type DWord
+    $k = Join-Path $restr 'AllowInstanceIDs'; New-Item -Path $k -Force | Out-Null
+    for ($i = 0; $i -lt $allowedInst.Count; $i++) { Set-ItemProperty -Path $k -Name ([string]($i + 1)) -Value $allowedInst[$i] -Type String }
     $k = Join-Path $restr 'AllowDeviceIDs'; New-Item -Path $k -Force | Out-Null
     for ($i = 0; $i -lt $allowed.Count; $i++) { Set-ItemProperty -Path $k -Name ([string]($i + 1)) -Value $allowed[$i] -Type String }
   }

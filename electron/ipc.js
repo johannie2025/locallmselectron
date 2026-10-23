@@ -30,7 +30,7 @@ const LICENSE_OPEN = new Set(['net:verifyAdmin', 'license:status', 'license:acti
 // Canaux qui concernent CE poste (jamais transmis au serveur, jamais appelables à distance) : licence du poste, applications installées,
 // alimentation, impression, sortie du kiosque, configuration réseau.
 const LOCAL_ONLY = new Set([
-  'license:status', 'license:activate', 'license:issueHere', 'license:issue', 'system:info', 'system:power',
+  'license:status', 'license:activate', 'license:issueHere', 'license:issue', 'maintenance:create', 'system:info', 'system:power',
   'apps:list', 'apps:launch', 'admin:apps:get', 'admin:apps:save', 'print:page', 'print:pdf', 'auth:adminExit', 'admin:exit',
   'net:getConfig', 'net:setMode', 'net:newPairCode', 'net:revokeClient', 'net:pair', 'net:restart',
 ]);
@@ -531,6 +531,26 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     const here = info.ok && info.id === payload.mid;
     if (activate && here) activateKey(key);
     return { key, plan: payload.plan, expires: payload.expires, machine: payload.mid, activated: !!(activate && here) };
+  });
+
+  // Clé de maintenance (super-administrateur) : écrit WLS-Maintenance\maintenance.json (+ installeur) sur la clé USB indiquée. La clé privée n'est jamais conservée.
+  handle('maintenance:create', 'super', (pem, { hours, target, installer } = {}) => {
+    const dir = String(target || '').trim();
+    if (!path.isAbsolute(dir) || !(() => { try { return fs.statSync(dir).isDirectory(); } catch { return false; } })()) throw new Error('BAD_TARGET');
+    let inst = null;
+    const ip = String(installer || '').trim();
+    if (ip) {
+      if (!path.isAbsolute(ip) || !/\.exe$/i.test(ip) || !(() => { try { return fs.statSync(ip).isFile(); } catch { return false; } })()) throw new Error('BAD_INSTALLER');
+      const h = require('crypto').createHash('sha256'); const fd = fs.openSync(ip, 'r'); const buf = Buffer.alloc(1 << 20);
+      try { for (let n; (n = fs.readSync(fd, buf, 0, buf.length, null)) > 0;) h.update(buf.subarray(0, n)); } finally { fs.closeSync(fd); }
+      inst = { name: path.basename(ip), sha256: h.digest('hex'), src: ip };
+    }
+    const { token, payload } = require('./maintenanceKey').issueToken({ hours: Number(hours) || 24, installer: inst, privateKeyPem: pem });
+    const out = path.join(dir, 'WLS-Maintenance'); fs.mkdirSync(out, { recursive: true });
+    if (inst) fs.copyFileSync(inst.src, path.join(out, inst.name));
+    fs.writeFileSync(path.join(out, 'maintenance.json'), token + '\n');
+    log(`maintenance:create → ${out} (${hours} h${inst ? ', installeur ' + inst.name : ''})`);
+    return { dir: out, expires: payload.expires, installer: inst ? inst.name : null };
   });
 
   // PowerPoint : conversion en PDF (PowerPoint ou LibreOffice), mise en cache ; renvoie le chemin relatif du PDF, servi ensuite comme un PDF ordinaire

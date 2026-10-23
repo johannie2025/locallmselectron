@@ -1,10 +1,12 @@
-Cle : Verbatim STORE N GO USB Device
+# Cles USB AUTORISEES (une par ligne). Tout autre peripherique de stockage USB est bloque.
+# Obtenez les lignes avec Identifier-Ma-Cle.cmd (cle branchee sur un PC non verrouille), collez-les ici, puis recompilez l'installeur.
+# IMPORTANT : ne mettez JAMAIS les identifiants generiques (USBSTOR\GenDisk, GenDisk, USBSTOR\Disk) : ils autoriseraient TOUTES les cles.
+# Lignes "instance:..." = numero de serie de VOTRE cle (le plus strict : une autre cle du meme modele reste bloquee).
+
+# Cle : Verbatim STORE N GO USB Device
 USBSTOR\DiskVerbatimSTORE_N_GO______5.00
 USBSTOR\DiskVerbatimSTORE_N_GO______
-USBSTOR\DiskVerbatim
 USBSTOR\VerbatimSTORE_N_GO______5
 VerbatimSTORE_N_GO______5
-USBSTOR\GenDisk
-GenDisk
 USB\VID_18A5&PID_0302&REV_0100
 USB\VID_18A5&PID_0302
