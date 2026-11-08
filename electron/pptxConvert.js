@@ -42,10 +42,55 @@ async function viaLibreOffice(soffice, src, dst) {
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
+// Export de chaque diapositive en image PNG par PowerPoint (comme les lecteurs de chants/présentations : rendu fidèle, sans moteur PDF)
+const PS_SLIDES = `
+$ErrorActionPreference = 'Stop'
+$app = New-Object -ComObject PowerPoint.Application
+try {
+  $pres = $app.Presentations.Open($env:WLS_SRC, -1, 0, 0)
+  $i = 1
+  foreach ($s in $pres.Slides) { $s.Export((Join-Path $env:WLS_DST ('slide-{0:D3}.png' -f $i)), 'PNG', 1920, 1080); $i++ }
+  $pres.Close()
+} finally {
+  if ($app.Presentations.Count -eq 0) { $app.Quit() }
+}`;
+
+const slideFiles = (dir) => { try { return fs.readdirSync(dir).filter((n) => /^slide-\d+\.png$/.test(n)).sort(); } catch { return []; } };
+const pendingSlides = new Map();
+
+/** Dossier des images de diapositives (généré si besoin par PowerPoint). Erreur : PPTX_NO_POWERPOINT. */
+function exportSlides(srcAbs, { platform = process.platform, log = () => {} } = {}) {
+  const st = fs.statSync(srcAbs);
+  const cache = path.join(path.dirname(srcAbs), '.wls-cache');
+  const dir = path.join(cache, `${path.basename(srcAbs).replace(/\.[^.]+$/, '')}-${st.size}-${Math.round(st.mtimeMs)}.slides`);
+  if (slideFiles(dir).length) return Promise.resolve({ dir, files: slideFiles(dir) });
+  if (pendingSlides.has(dir)) return pendingSlides.get(dir);
+  const p = (async () => {
+    if (platform !== 'win32') throw new Error('PPTX_NO_POWERPOINT');
+    const tmp = `${dir}.tmp-${process.pid}`;
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.mkdirSync(tmp, { recursive: true });
+    try {
+      const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+      await run(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', PS_SLIDES], { env: { ...process.env, WLS_SRC: srcAbs, WLS_DST: tmp }, timeout: 300000 });
+      if (!slideFiles(tmp).length) throw new Error('no slide exported');
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.renameSync(tmp, dir);
+      return { dir, files: slideFiles(dir) };
+    } catch (e) {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      log(`pptx slides: ${e.message} ${e.stderr || ''}`);
+      throw new Error('PPTX_NO_POWERPOINT');
+    }
+  })().finally(() => pendingSlides.delete(dir));
+  pendingSlides.set(dir, p);
+  return p;
+}
+
 const pending = new Map();
 
 /** Retourne le chemin du PDF (généré si besoin). Erreurs : PPTX_NO_CONVERTER, PPTX_CONVERT_FAILED. */
-function convert(srcAbs, { platform = process.platform, log = () => {} } = {}) {
+function convert(srcAbs, { platform = process.platform, log = () => {}, skipPowerPoint = false } = {}) {
   const st = fs.statSync(srcAbs);
   const dir = path.join(path.dirname(srcAbs), '.wls-cache');
   const dst = path.join(dir, `${path.basename(srcAbs).replace(/\.[^.]+$/, '')}-${st.size}-${Math.round(st.mtimeMs)}.pdf`);
@@ -55,7 +100,7 @@ function convert(srcAbs, { platform = process.platform, log = () => {} } = {}) {
     if (platform !== 'win32') throw new Error('PPTX_NO_CONVERTER');
     fs.mkdirSync(dir, { recursive: true });
     const errors = [];
-    try { await viaPowerPoint(srcAbs, dst); if (fs.existsSync(dst)) return dst; } catch (e) { errors.push(`PowerPoint: ${e.message} ${e.stderr || ''}`); }
+    if (!skipPowerPoint) try { await viaPowerPoint(srcAbs, dst); if (fs.existsSync(dst)) return dst; } catch (e) { errors.push(`PowerPoint: ${e.message} ${e.stderr || ''}`); }
     const so = findSoffice();
     if (so) { try { await viaLibreOffice(so, srcAbs, dst); if (fs.existsSync(dst)) return dst; } catch (e) { errors.push(`LibreOffice: ${e.message}`); } }
     log(`pptx: ${errors.join(' | ')}`);
@@ -65,4 +110,4 @@ function convert(srcAbs, { platform = process.platform, log = () => {} } = {}) {
   return p;
 }
 
-module.exports = { convert, findSoffice };
+module.exports = { convert, exportSlides, findSoffice };

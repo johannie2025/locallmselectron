@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errText } from '../../api.js';
 import { useI18n } from '../../i18n/index.jsx';
-import { Empty, useUi } from '../../components/ui.jsx';
+import { Empty, Modal, useUi } from '../../components/ui.jsx';
+import Quiz from '../Quiz.jsx';
 
 const ICON = { video: '🎬', audio: '🎧', pdf: '📄', pptx: '📊' };
 const move = (arr, i, d) => { const j = i + d; if (j < 0 || j >= arr.length) return arr; const a = [...arr]; [a[i], a[j]] = [a[j], a[i]]; return a; };
@@ -78,6 +79,7 @@ const uid = () => 'q' + Math.random().toString(36).slice(2, 8);
 const blankQuestion = (type) => {
   if (type === 'mcq') return { id: uid(), type, text: '', options: ['', ''], answer: [], points: 1, explanation: '' };
   if (type === 'true_false') return { id: uid(), type, text: '', answer: true, points: 1, explanation: '' };
+  if (type === 'translate') return { id: uid(), type, text: '', to: 'en', answers: [''], points: 1, explanation: '' };
   return { id: uid(), type: 'fill_blank', text: '', answers: [''], caseSensitive: false, points: 1, explanation: '' };
 };
 
@@ -120,6 +122,24 @@ function QuestionCard({ q, index, count, onChange, onMove, onDelete }) {
           {[true, false].map((v) => <button key={String(v)} className={q.answer === v ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'} onClick={() => set({ answer: v })}>{v ? t('quiz.true') : t('quiz.false')}</button>)}
         </div>
       )}
+      {q.type === 'translate' && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-slate-300">{t('qe.translateTo')}</label>
+            <select className="input !w-40" value={q.to || 'en'} onChange={(e) => set({ to: e.target.value })}>
+              {['fr', 'en', 'es', 'pt', 'de', 'it', 'ar', 'zh'].map((c) => <option key={c} value={c}>{t(`lang.name.${c}`)}</option>)}
+            </select>
+          </div>
+          <div className="text-xs text-slate-400">{t('qe.translateHelp')}</div>
+          {q.answers.map((a, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input className="input" placeholder={t('qe.acceptedAnswer')} value={a} onChange={(e) => set({ answers: q.answers.map((x, k) => (k === i ? e.target.value : x)) })} />
+              <button className="btn-ghost btn-sm" disabled={q.answers.length <= 1} onClick={() => set({ answers: q.answers.filter((_, k) => k !== i) })}>✕</button>
+            </div>
+          ))}
+          <button className="btn-ghost btn-sm" onClick={() => set({ answers: [...q.answers, ''] })}>＋ {t('qe.addAnswer')}</button>
+        </div>
+      )}
       {q.type === 'fill_blank' && (
         <div className="space-y-2">
           <div className="text-xs text-slate-400">{t('qe.blankHelp')}</div>
@@ -143,30 +163,35 @@ function QuestionCard({ q, index, count, onChange, onMove, onDelete }) {
 /** Éditeur de quiz en formulaire : le quiz.json est généré et enregistré automatiquement en arrière-plan. */
 function QuizEditor() {
   const { t, fmtDateTime } = useI18n();
-  const [mods, setMods] = useState([]);
+  const [tree, setTree] = useState([]);
+  const [openMod, setOpenMod] = useState('');
+  const [pv, setPv] = useState(false); // aperçu « comme l'étudiant »
   const [id, setId] = useState('');
   const [quiz, setQuiz] = useState(null);
   const [status, setStatus] = useState({ kind: 'idle' });
   const timer = useRef(null);
   const latest = useRef({ id: '', quiz: null });
-  useEffect(() => { api('admin:modules:list').then(setMods); }, []);
+  const loadTree = useCallback(() => api('admin:quizzes:list').then(setTree).catch(() => {}), []);
+  useEffect(() => { loadTree(); }, [loadTree]);
 
   const flush = useCallback(async () => {
     clearTimeout(timer.current); timer.current = null;
     const { id: mid, quiz: q } = latest.current;
     if (!mid || !q) return;
     setStatus({ kind: 'saving' });
-    try { const r = await api('admin:quiz:save', mid, q); setStatus(r.saved ? { kind: 'saved', at: Date.now() } : { kind: 'invalid' }); }
+    try { const r = await api('admin:quiz:save', mid, q); setStatus(r.saved ? { kind: 'saved', at: Date.now() } : { kind: 'invalid' }); if (r.saved) loadTree(); }
     catch (e) { setStatus({ kind: 'error', msg: errText(e, t) }); }
-  }, [t]);
+  }, [t, loadTree]);
   useEffect(() => () => { if (timer.current) flush(); }, [flush]);
 
+  const [multi, setMulti] = useState(false);
+  const open0 = (mid) => open(mid);
   const open = async (mid) => {
     if (timer.current) await flush();
     setId(mid); setStatus({ kind: 'idle' }); setQuiz(null);
     if (!mid) return;
     const r = await api('admin:quiz:read', mid);
-    setQuiz(r.quiz); latest.current = { id: mid, quiz: r.quiz };
+    setQuiz(r.quiz); setMulti(!!r.multilingual); latest.current = { id: mid, quiz: r.quiz };
     if (r.broken) setStatus({ kind: 'error', msg: r.broken });
   };
   const change = (next) => {
@@ -184,15 +209,57 @@ function QuizEditor() {
     error: <span className="text-rose-400">✖ {status.msg}</span>,
   }[status.kind];
 
+  const current = tree.flatMap((c) => c.modules.flatMap((m) => m.tests.map((x) => ({ ...x, course: c.title, module: m.title })))).find((x) => x.id === id);
+  const startPreview = async () => { if (timer.current) await flush(); setPv(true); };
   return (
-    <div className="space-y-4">
-      <select className="input !w-96" value={id} onChange={(e) => open(e.target.value)}>
-        <option value="">{t('qe.chooseModule')}</option>{mods.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-      </select>
-      {quiz && (
+    <div className="grid lg:grid-cols-[21rem_1fr] gap-4 items-start">
+      <aside className="card space-y-3 lg:sticky lg:top-2 lg:max-h-[calc(100vh-8rem)] overflow-auto">
+        <div className="text-sm text-slate-300">{t('qe.pickHelp')}</div>
+        {tree.map((c) => (
+          <div key={c.id} className="space-y-1">
+            <div className="text-xs uppercase tracking-wide text-slate-400 pt-1">{c.title}</div>
+            {c.modules.map((m) => {
+              const open = openMod === m.id;
+              const nb = m.tests.filter((x) => x.exists).length;
+              return (
+                <div key={m.id} className="rounded-lg border border-white/10">
+                  <button className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/5" onClick={() => setOpenMod(open ? '' : m.id)}>
+                    <span className="text-slate-400">{open ? '▾' : '▸'}</span>
+                    <span className="flex-1 truncate font-medium">{m.title}</span>
+                    <span className="text-xs rounded-full bg-white/10 px-2 py-0.5">{nb}/{m.tests.length}</span>
+                  </button>
+                  {open && (
+                    <div className="border-t border-white/10 p-1 space-y-0.5">
+                      {m.tests.map((x) => (
+                        <button key={x.id} className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-sm ${id === x.id ? 'bg-brand/30 ring-1 ring-brand' : 'hover:bg-white/5'}`} onClick={() => open0(x.id)}>
+                          <span>{x.kind === 'module' ? '🏁' : x.type === 'pdf' || x.type === 'pptx' ? '📄' : x.type === 'audio' ? '🎧' : '🎬'}</span>
+                          <span className="flex-1 truncate">{x.kind === 'module' ? t('qe.finalTest') : x.title}</span>
+                          {!x.exists ? <span className="text-xs text-slate-500">{t('qe.create')}</span>
+                            : <span className="text-xs text-slate-300">{x.multilingual ? '🌐 ' : ''}{x.questions}{!x.enabled ? ' ⛔' : ''}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+        {!tree.length && <Empty>{t('qe.noModules')}</Empty>}
+      </aside>
+      <div className="space-y-4 min-w-0">
+      {!id && <Empty>{t('qe.chooseModule')}</Empty>}
+      {current && <div className="text-sm text-slate-300">{current.course} › {current.module} › <b className="text-slate-100">{current.kind === 'module' ? t('qe.finalTest') : current.title}</b>{!current.enabled && <span className="ml-2 text-amber-300">⛔ {t('qe.disabled')}</span>}</div>}
+      {quiz && multi && (
+        <div className="card space-y-2">
+          <div className="text-amber-300">🌐 {t('err.QUIZ_MULTILINGUAL')}</div>
+          <pre className="text-xs overflow-auto max-h-96 bg-slate-950/70 rounded p-3">{JSON.stringify(quiz, null, 2)}</pre>
+        </div>
+      )}
+      {quiz && !multi && (
         <>
           <div className="sticky top-0 z-10 -mx-2 px-2 py-2 bg-slate-900/80 backdrop-blur flex items-center justify-between">
-            <span className="font-medium">{t('qe.title')}</span><span className="text-sm">{badge}</span>
+            <span className="flex items-center gap-3"><span className="font-medium">{t('qe.title')}</span><button className="btn-ghost btn-sm" disabled={!quiz.questions.length || status.kind === 'invalid'} title={t('qe.previewHint')} onClick={startPreview}>👁 {t('qe.preview')}</button></span><span className="text-sm">{badge}</span>
           </div>
           <div className="card grid md:grid-cols-4 gap-3">
             <div className="md:col-span-2"><label className="label">{t('qe.quizTitle')}</label><input className="input" value={quiz.title || ''} onChange={(e) => change({ ...quiz, title: e.target.value })} /></div>
@@ -208,9 +275,81 @@ function QuizEditor() {
           ))}
           {!quiz.questions.length && <Empty>{t('qe.noQuestions')}</Empty>}
           <div className="flex flex-wrap gap-2">
-            {['mcq', 'true_false', 'fill_blank'].map((tp) => <button key={tp} className="btn-primary btn-sm" onClick={() => change({ ...quiz, questions: [...quiz.questions, blankQuestion(tp)] })}>＋ {t(`qtype.${tp}`)}</button>)}
+            {['mcq', 'true_false', 'fill_blank', 'translate'].map((tp) => <button key={tp} className="btn-primary btn-sm" onClick={() => change({ ...quiz, questions: [...quiz.questions, blankQuestion(tp)] })}>＋ {t(`qtype.${tp}`)}</button>)}
           </div>
         </>
+      )}
+      </div>
+      {pv && <Modal title={`👁 ${t('qe.preview')}`} onClose={() => setPv(false)} wide><Quiz moduleId={id} go={() => setPv(false)} preview /></Modal>}
+    </div>
+  );
+}
+
+const fmt = (s) => { const n = Math.max(0, Math.round(Number(s) || 0)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
+const parseTime = (v) => { const m = String(v).trim().match(/^(?:(\d+):)?(\d+(?:[.,]\d+)?)$/); return m ? (Number(m[1] || 0) * 60 + Number(m[2].replace(',', '.'))) : NaN; };
+
+/** Réglages des leçons : portion de vidéo visible par l'étudiant, tests (leçon / module) activés ou désactivés. */
+function LessonSettings() {
+  const { t } = useI18n();
+  const { toast } = useUi();
+  const [list, setList] = useState([]);
+  const [sel, setSel] = useState(null); // { moduleId, item }
+  const [from, setFrom] = useState(''); const [to, setTo] = useState('');
+  const vid = useRef(null);
+  const load = () => api('admin:lessons:list').then(setList).catch((e) => toast(errText(e, t), 'err'));
+  useEffect(() => { load(); }, []);
+  const save = async (moduleId, itemId, patch) => { try { await api('admin:lessons:save', moduleId, itemId, patch); await load(); toast(t('common.saved')); } catch (e) { toast(errText(e, t), 'err'); } };
+  const pick = (moduleId, item) => { setSel({ moduleId, item }); setFrom(item.clip ? fmt(item.clip.start) : ''); setTo(item.clip ? fmt(item.clip.end) : ''); };
+  const cur = () => (vid.current ? vid.current.currentTime : 0);
+  const saveClip = () => {
+    const a = parseTime(from); const b = parseTime(to);
+    if (!(a >= 0) || !(b > a)) { toast(t('err.BAD_CLIP'), 'err'); return; }
+    save(sel.moduleId, sel.item.id, { clip: { start: a, end: b } }).then(() => setSel((s) => s && { ...s, item: { ...s.item, clip: { start: a, end: b } } }));
+  };
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-slate-300">{t('ls.help')}</p>
+      {list.map((c) => (
+        <div key={c.id} className="card space-y-3">
+          <div className="font-semibold">{c.title}</div>
+          {c.modules.map((m) => (
+            <div key={m.id} className="rounded-lg border border-white/10 p-3 space-y-2">
+              <div className="flex items-center gap-3">
+                <b className="flex-1">{m.title}</b>
+                {m.quizExists && <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={m.quizEnabled} onChange={(e) => save(m.id, null, { quizEnabled: e.target.checked })} /> {t('ls.finalTest')}</label>}
+              </div>
+              {m.items.map((i) => (
+                <div key={i.id} className="flex flex-wrap items-center gap-3 text-sm border-t border-white/5 pt-2">
+                  <span className="flex-1 min-w-48 truncate">{i.title}</span>
+                  {(i.type === 'video' || i.type === 'audio') && (
+                    <button className="btn-ghost btn-sm" onClick={() => pick(m.id, i)}>✂️ {i.clip ? `${fmt(i.clip.start)} → ${fmt(i.clip.end)}` : t('ls.wholeVideo')}</button>
+                  )}
+                  {i.quizExists && <label className="flex items-center gap-2"><input type="checkbox" checked={i.quizEnabled} onChange={(e) => save(m.id, i.id, { quizEnabled: e.target.checked })} /> {t('ls.lessonTest')}</label>}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      ))}
+      {sel && (
+        <Modal title={`${t('ls.clipTitle')} — ${sel.item.title}`} onClose={() => setSel(null)} wide>
+          <div className="space-y-3">
+            {sel.item.type === 'video'
+              ? <video ref={vid} src={'lms-media://f/' + sel.item.id.split('/').map(encodeURIComponent).join('/')} crossOrigin="anonymous" controls className="w-full max-h-[50vh] bg-black rounded" />
+              : <audio ref={vid} src={'lms-media://f/' + sel.item.id.split('/').map(encodeURIComponent).join('/')} crossOrigin="anonymous" controls className="w-full" />}
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div><label className="label">{t('ls.start')}</label>
+                <div className="flex gap-2"><input className="input font-mono" value={from} onChange={(e) => setFrom(e.target.value)} placeholder="0:00" /><button className="btn-ghost btn-sm whitespace-nowrap" onClick={() => setFrom(fmt(cur()))}>{t('ls.useCurrent')}</button></div></div>
+              <div><label className="label">{t('ls.end')}</label>
+                <div className="flex gap-2"><input className="input font-mono" value={to} onChange={(e) => setTo(e.target.value)} placeholder="5:30" /><button className="btn-ghost btn-sm whitespace-nowrap" onClick={() => setTo(fmt(cur()))}>{t('ls.useCurrent')}</button></div></div>
+            </div>
+            <div className="flex gap-2">
+              <button className="btn-primary" onClick={saveClip}>{t('common.save')}</button>
+              <button className="btn-ghost" onClick={() => save(sel.moduleId, sel.item.id, { clip: null }).then(() => setSel(null))}>{t('ls.wholeVideo')}</button>
+            </div>
+            <p className="text-xs text-slate-400">{t('ls.clipNote')}</p>
+          </div>
+        </Modal>
       )}
     </div>
   );
@@ -223,9 +362,9 @@ export default function AdminContent() {
     <div className="space-y-5">
       <h2 className="text-2xl font-semibold">{t('admin.content')}</h2>
       <div className="flex gap-2">
-        {[['order', 'content.order'], ['quiz', 'content.quiz']].map(([i, k]) => <button key={i} className={sub === i ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'} onClick={() => setSub(i)}>{t(k)}</button>)}
+        {[['order', 'content.order'], ['lessons', 'content.lessons'], ['quiz', 'content.quiz']].map(([i, k]) => <button key={i} className={sub === i ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'} onClick={() => setSub(i)}>{t(k)}</button>)}
       </div>
-      {sub === 'order' ? <CourseOrder /> : <QuizEditor />}
+      {sub === 'order' ? <CourseOrder /> : sub === 'lessons' ? <LessonSettings /> : <QuizEditor />}
     </div>
   );
 }

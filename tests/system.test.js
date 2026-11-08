@@ -92,6 +92,12 @@ test('PowerPoint : conversion PDF en cache, erreur claire sans convertisseur ; g
   fs.mkdirSync(path.join(dir, '.wls-cache'));
   const cached = path.join(dir, '.wls-cache', `cours-${st.size}-${Math.round(st.mtimeMs)}.pdf`); fs.writeFileSync(cached, '%PDF');
   assert.strictEqual(await convert(f, { platform: 'linux' }), cached, 'le PDF en cache est réutilisé');
+  const { exportSlides } = require('../electron/pptxConvert');
+  await assert.rejects(exportSlides(f, { platform: 'linux' }), /PPTX_NO_POWERPOINT/);
+  const sd = path.join(dir, '.wls-cache', `cours-${st.size}-${Math.round(st.mtimeMs)}.slides`); fs.mkdirSync(sd);
+  for (const n of ['slide-002.png', 'slide-001.png', 'x.txt']) fs.writeFileSync(path.join(sd, n), 'p');
+  const ex = await exportSlides(f, { platform: 'linux' });
+  assert.deepStrictEqual(ex.files, ['slide-001.png', 'slide-002.png'], 'images de diapositives en cache réutilisées');
   const g = read('scripts/wls-keyguard.ps1');
   assert.ok(!/[^\x00-\x7f]/.test(g) && g.includes('Shell_TrayWnd') && g.includes('0x5B') && g.includes('0x09'));
   assert.ok(read('electron/main.js').includes('wls-keyguard.ps1'));
@@ -127,4 +133,28 @@ test('clé de maintenance : signature, expiration, durée max, falsification, ha
   assert.ok(ps.includes('AllowInstanceIDs') && ps.includes("-notmatch 'Gen'"));
   assert.ok(read('electron/ipc.js').includes("handle('maintenance:create', 'super'"));
   assert.ok(read('electron/main.js').includes('--verify-maintenance') && read('electron/main.js').includes('maintenance.on'));
+});
+
+test('générateur Gemini : appel, validation, chemins, aucune clé écrite', async () => {
+  const g = require('../tools/gemini-quiz');
+  const quizJson = { title: { fr: 'T', en: 'T', es: 'T' }, questions: [
+    { id: 'x', type: 'mcq', text: { fr: 'Q ?', en: 'Q?', es: '¿Q?' }, options: [{ fr: 'a', en: 'a', es: 'a' }, { fr: 'b', en: 'b', es: 'b' }], answer: [1], explanation: { fr: 'e', en: 'e', es: 'e' } },
+    { id: 'y', type: 'true_false', text: 'V ?', answer: true },
+    { id: 'z', type: 'translate', text: { fr: 'Traduisez', en: 'Translate', es: 'Traduzca' }, to: 'en', answers: ['b'] }] };
+  let seen;
+  const fetchImpl = async (url, init) => { seen = { url, init }; return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '```json\n' + JSON.stringify(quizJson) + '\n```' }] } }] }) }; };
+  const q = await g.generateQuiz({ urls: ['https://youtu.be/AAA', 'https://youtu.be/BBB'], kind: 'module', key: 'K', fetchImpl });
+  assert.deepStrictEqual(q.questions.map((x) => x.id), ['q1', 'q2', 'q3']);
+  assert.strictEqual(q.passingScore, 80);
+  const body = JSON.parse(seen.init.body);
+  assert.strictEqual(body.contents[0].parts.filter((p) => p.file_data).length, 2, 'une partie vidéo par URL');
+  assert.strictEqual(seen.init.headers['x-goog-api-key'], 'K');
+  assert.ok(!seen.url.includes('K'), 'clé jamais dans l\'URL');
+  const bad = async () => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '{"questions":[]}' }] } }] }) });
+  await assert.rejects(g.generateQuiz({ urls: ['u'], kind: 'lecon', key: 'K', fetchImpl: bad, retries: 0 }), /invalide/);
+  await assert.rejects(g.generateQuiz({ urls: ['u'], kind: 'lecon', fetchImpl }), /GEMINI_API_KEY/);
+  const rows = g.parseCsv('type;chemin;youtube\nlecon;C/M/a.mp4;https://y/1\nmodule;C/M;https://y/1 | https://y/2');
+  assert.strictEqual(rows[1].urls.length, 2);
+  assert.ok(g.targetFile('/r', rows[0]).endsWith(path.join('M', 'a.quiz.json')) && g.targetFile('/r', rows[1]).endsWith(path.join('M', 'quiz.json')));
+  assert.throws(() => g.targetFile('/r', { type: 'lecon', path: '../../etc/x.mp4', urls: [] }), /hors du dossier/);
 });

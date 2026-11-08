@@ -88,7 +88,7 @@ export default function App() {
         {page.name === 'dashboard' && <Dashboard data={data} go={go} user={user} />}
         {page.name === 'player' && <Player item={page.item} module={page.module} data={data} go={go} />}
         {page.name === 'apps' && <Apps go={go} />}
-        {page.name === 'quiz' && <Quiz moduleId={page.moduleId} go={go} />}
+        {page.name === 'quiz' && <Quiz key={page.moduleId} moduleId={page.moduleId} go={go} preview={isAdmin} />}
         {inAdmin && (
           <div className="p-6 max-w-7xl mx-auto">
             {page.tab === 'dash' && <AdminDashboard />}

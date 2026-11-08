@@ -2,7 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import { api, errText } from '../api.js';
 import { useI18n } from '../i18n/index.jsx';
 
-export default function Quiz({ moduleId, go }) {
+const PreviewBanner = ({ t }) => <div className="rounded-lg border border-amber-400/40 bg-amber-400/10 text-amber-200 text-sm px-3 py-2">👁 {t('quiz.previewBanner')}</div>;
+
+/** Bonne(s) réponse(s) en clair (aperçu formateur) */
+function expectedText(q, exp, t) {
+  if (q.type === 'mcq') return (exp || []).map((i) => q.options[i]).join(' · ');
+  if (q.type === 'true_false') return exp ? t('quiz.true') : t('quiz.false');
+  return (exp || []).join('  /  ');
+}
+
+export default function Quiz({ moduleId, go, preview = false }) {
   const { t, lang } = useI18n();
   const [quiz, setQuiz] = useState(null);
   const [answers, setAnswers] = useState({});
@@ -12,19 +21,23 @@ export default function Quiz({ moduleId, go }) {
   const start = useRef(Date.now());
   const sent = useRef(false);
 
-  const load = async () => {
-    setResult(null); setAnswers({}); setErr(''); sent.current = false;
+  const load = async (fresh = true) => {
+    if (fresh) { setResult(null); setAnswers({}); setErr(''); sent.current = false; }
     try {
-      const q = await api('quiz:get', moduleId, lang);
-      setQuiz(q); start.current = Date.now(); setLeft(q.timeLimitSec);
+      const q = await api('quiz:get', moduleId, lang, preview);
+      setQuiz(q);
+      if (fresh) { start.current = Date.now(); setLeft(q.timeLimitSec); }
     } catch (e) { setErr(errText(e, t)); }
   };
-  useEffect(() => { load(); }, [moduleId]);
+  const firstLoad = useRef(true);
+  useEffect(() => { firstLoad.current = true; load(true); }, [moduleId]);
+  // Changement de langue en cours de test : les questions passent dans la nouvelle langue, les réponses saisies sont conservées
+  useEffect(() => { if (firstLoad.current) { firstLoad.current = false; return; } if (!result) load(false); }, [lang]);
 
   const submit = async () => {
     if (sent.current) return;
     sent.current = true;
-    try { setResult(await api('quiz:submit', moduleId, answers, (Date.now() - start.current) / 1000, lang)); }
+    try { setResult(await api('quiz:submit', moduleId, answers, (Date.now() - start.current) / 1000, lang, preview)); }
     catch (e) { sent.current = false; setErr(errText(e, t)); }
   };
 
@@ -48,14 +61,16 @@ export default function Quiz({ moduleId, go }) {
           <div className="mt-1">{result.passed ? t('quiz.passed') : t('quiz.failed', { n: result.passingScore })}</div>
           {result.certificate && <div className="mt-3 rounded-lg bg-amber-400 text-slate-900 font-semibold py-2">{t('quiz.certificate')}</div>}
         </div>
+        {preview && <PreviewBanner t={t} />}
         {quiz.questions.map((q, i) => (
           <div key={q.id} className="card">
             <div>{i + 1}. {q.text} {byId[q.id]?.correct ? '✅' : '❌'}</div>
+            {preview && !byId[q.id]?.correct && byId[q.id]?.expected != null && <p className="text-sm text-emerald-300 mt-1">✔ {t('quiz.expected')} : {expectedText(q, byId[q.id].expected, t)}</p>}
             {byId[q.id]?.explanation && <p className="text-sm text-slate-400 mt-1">{byId[q.id].explanation}</p>}
           </div>
         ))}
         <div className="flex gap-3">
-          {!result.passed && <button className="btn-primary" onClick={load}>{t('quiz.retry')}</button>}
+          {(preview || !result.passed) && <button className="btn-primary" onClick={() => load(true)}>{t('quiz.retry')}</button>}
           <button className="btn-ghost" onClick={() => go({ name: 'dashboard' })}>{t('quiz.back')}</button>
         </div>
       </div>
@@ -65,6 +80,7 @@ export default function Quiz({ moduleId, go }) {
   const set = (id, v) => setAnswers((a) => ({ ...a, [id]: v }));
   return (
     <div className="p-8 max-w-3xl mx-auto space-y-4">
+      {preview && <PreviewBanner t={t} />}
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">{quiz.title || t('qe.title')}</h2>
         {left != null && <span className={`font-mono text-lg ${left < 30 ? 'text-rose-400' : ''}`}>{Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')}</span>}
@@ -94,6 +110,12 @@ export default function Quiz({ moduleId, go }) {
               {[true, false].map((v) => (
                 <button key={String(v)} className={answers[q.id] === v ? 'btn-primary' : 'btn-ghost'} onClick={() => set(q.id, v)}>{v ? t('quiz.true') : t('quiz.false')}</button>
               ))}
+            </div>
+          )}
+          {q.type === 'translate' && (
+            <div className="space-y-1">
+              {q.to && <div className="text-xs text-slate-400">{t('quiz.translateTo', { lang: t(`lang.name.${q.to}`) })}</div>}
+              <textarea className="input" rows={2} value={answers[q.id] || ''} onChange={(e) => set(q.id, e.target.value)} placeholder={t('quiz.yourTranslation')} />
             </div>
           )}
           {q.type === 'fill_blank' && <input className="input" value={answers[q.id] || ''} onChange={(e) => set(q.id, e.target.value)} placeholder={t('quiz.yourAnswer')} />}

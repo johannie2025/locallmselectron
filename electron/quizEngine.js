@@ -15,10 +15,30 @@ const QUIZ_TEMPLATE = {
     { id: 'q1', type: 'mcq', text: 'Choisissez la bonne forme : She ___ to school.', options: ['go', 'goes', 'going'], answer: [1], points: 1, explanation: 'Troisième personne du singulier : -es.' },
     { id: 'q2', type: 'true_false', text: '"I am agree" est correct.', answer: false, points: 1, explanation: 'On dit "I agree".' },
     { id: 'q3', type: 'fill_blank', text: 'I ___ to school every day.', answers: ['go'], points: 1 },
+    { id: 'q4', type: 'translate', text: 'Je mange une pomme.', to: 'en', answers: ['I eat an apple.', 'I am eating an apple.'], points: 1 },
   ],
 };
 
-const TYPES = new Set(['mcq', 'true_false', 'fill_blank']);
+const TYPES = new Set(['mcq', 'true_false', 'fill_blank', 'translate']);
+const LANG_ORDER = ['fr', 'en', 'es'];
+
+/** Texte multilingue : « chaîne » ou { fr, en, es }. Repli : langue demandée → fr → en → es → première valeur. */
+const isI18n = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
+function L(v, lang = 'fr') {
+  if (!isI18n(v)) return v == null ? '' : String(v);
+  const k = [lang, ...LANG_ORDER].find((x) => v[x] != null && String(v[x]).trim() !== '');
+  return k ? String(v[k]) : String(Object.values(v)[0] ?? '');
+}
+/** Réponses acceptées (fill_blank / translate) : tableau, ou { fr:[…], en:[…], es:[…] } */
+function answersOf(q, lang = 'fr') {
+  const a = q.answers;
+  if (Array.isArray(a)) return a.map((x) => L(x, lang));
+  if (isI18n(a)) { const k = [lang, ...LANG_ORDER].find((x) => Array.isArray(a[x]) && a[x].length); return k ? a[k].map(String) : []; }
+  return [];
+}
+/** Le quiz contient-il des textes multilingues ? (l'éditeur en formulaire ne doit pas les aplatir) */
+const hasI18n = (v) => (Array.isArray(v) ? v.some(hasI18n) : isI18n(v) ? (Object.keys(v).some((k) => LANG_ORDER.includes(k)) || Object.values(v).some(hasI18n)) : false);
+const quizTitle = (quiz, lang) => L(quiz.title, lang);
 
 function validateQuiz(q) {
   const errors = [];
@@ -30,15 +50,15 @@ function validateQuiz(q) {
     const n = `Question ${i + 1}`;
     if (!x.id || ids.has(x.id)) errors.push(`${n} : "id" manquant ou en double`);
     ids.add(x.id);
-    if (!TYPES.has(x.type)) errors.push(`${n} : type inconnu (mcq | true_false | fill_blank)`);
-    if (!x.text) errors.push(`${n} : "text" manquant`);
+    if (!TYPES.has(x.type)) errors.push(`${n} : type inconnu (mcq | true_false | fill_blank | translate)`);
+    if (!L(x.text).trim()) errors.push(`${n} : "text" manquant`);
     if (x.type === 'mcq') {
-      if (!Array.isArray(x.options) || x.options.length < 2 || x.options.some((o) => !String(o).trim())) errors.push(`${n} : "options" (≥ 2, non vides) requis`);
+      if (!Array.isArray(x.options) || x.options.length < 2 || x.options.some((o) => !L(o).trim())) errors.push(`${n} : "options" (≥ 2, non vides) requis`);
       else if (!Array.isArray(x.answer) || !x.answer.length || x.answer.some((a) => !Number.isInteger(a) || a < 0 || a >= x.options.length))
         errors.push(`${n} : "answer" doit être un tableau d'indices valides`);
     }
     if (x.type === 'true_false' && typeof x.answer !== 'boolean') errors.push(`${n} : "answer" doit être true/false`);
-    if (x.type === 'fill_blank' && (!Array.isArray(x.answers) || !x.answers.length || x.answers.some((a) => !String(a).trim()))) errors.push(`${n} : "answers" (liste de réponses acceptées) requis`);
+    if ((x.type === 'fill_blank' || x.type === 'translate') && (!answersOf(x).length || answersOf(x).some((a) => !String(a).trim()))) errors.push(`${n} : "answers" (liste de réponses acceptées) requis`);
   });
   return errors;
 }
@@ -60,18 +80,21 @@ const hashStr = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) 
 function shuffle(arr, rnd) { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
 /** Questions envoyées au renderer : sans réponses ni explications. */
-function publicQuestions(quiz) {
+function publicQuestions(quiz, lang = 'fr') {
   const qs = quiz.questions.map((q) => ({
-    id: q.id, type: q.type, text: q.text, points: q.points || 1,
-    ...(q.type === 'mcq' ? { options: q.options, multiple: q.answer.length > 1 } : {}),
+    id: q.id, type: q.type, text: L(q.text, lang), points: q.points || 1,
+    ...(q.type === 'mcq' ? { options: q.options.map((o) => L(o, lang)), multiple: q.answer.length > 1 } : {}),
+    ...(q.type === 'translate' ? { to: q.to || null, from: q.from || null } : {}),
   }));
   return quiz.shuffleQuestions ? shuffle(qs, Math.random) : qs;
 }
 
 const norm = (s) => String(s ?? '').normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
 
+const normT = (s) => norm(String(s ?? '').replace(/[’‘`´]/g, "'").normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.,;:!?¡¿"«»()\-–—]/g, ' '));
+
 /** answers : { [questionId]: number[] | boolean | string } */
-function grade(quiz, answers = {}) {
+function grade(quiz, answers = {}, lang = 'fr', reveal = false) {
   let got = 0, total = 0;
   const details = quiz.questions.map((q) => {
     const pts = q.points || 1;
@@ -84,10 +107,15 @@ function grade(quiz, answers = {}) {
     } else if (q.type === 'true_false') ok = a === q.answer;
     else if (q.type === 'fill_blank') {
       const cs = q.caseSensitive;
-      ok = q.answers.some((s) => (cs ? String(a ?? '').trim() === String(s).trim() : norm(a) === norm(s)));
+      ok = answersOf(q, lang).some((s) => (cs ? String(a ?? '').trim() === String(s).trim() : norm(a) === norm(s)));
+    } else if (q.type === 'translate') {
+      // traduction : insensible à la casse, aux accents, à la ponctuation et aux apostrophes typographiques
+      ok = answersOf(q, lang).some((s) => normT(a) === normT(s));
     }
     if (ok) got += pts;
-    return { id: q.id, correct: ok, explanation: q.explanation || null };
+    const d = { id: q.id, correct: ok, explanation: q.explanation ? L(q.explanation, lang) : null };
+    if (reveal) d.expected = q.type === 'mcq' ? q.answer : q.type === 'true_false' ? q.answer : answersOf(q, lang); // aperçu formateur : bonnes réponses
+    return d;
   });
   const score = total ? Math.round((got / total) * 1000) / 10 : 0;
   return { score, details };
@@ -118,4 +146,4 @@ function autoQuiz(course, module, lang = 'fr') {
   return { version: 1, title: `Révision — ${module.title}`, passingScore: null, questions, auto: true };
 }
 
-module.exports = { QUIZ_TEMPLATE, validateQuiz, readQuizFile, publicQuestions, grade, autoQuiz };
+module.exports = { QUIZ_TEMPLATE, validateQuiz, readQuizFile, publicQuestions, grade, autoQuiz, L, answersOf, hasI18n, quizTitle, isI18n };

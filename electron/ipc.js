@@ -8,6 +8,7 @@ const { scanRoot, MEDIA_EXT } = require('./courseScanner');
 const pptxConvert = require('./pptxConvert');
 const { buildView } = require('./gating');
 const quizEngine = require('./quizEngine');
+const { listSubtitles } = require('./subtitles');
 const license = require('./license');
 const clockGuard = require('./clockGuard');
 const appCatalog = require('./appCatalog');
@@ -173,7 +174,7 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     const t = getTree();
     const certs = new Map(db.prepare('SELECT course_id, number, issued_at FROM certificates WHERE user_id=?').all(cur().id).map((r) => [r.course_id, r]));
     v.courses.forEach((c) => { const x = certs.get(c.id); c.certificate = x ? { number: x.number, issuedAt: x.issued_at } : null; });
-    return { ...v, error: t.error || null, stale: !!t.stale, scannedAt: t.scannedAt, warnings: isStaff(cur().role) ? t.warnings || [] : [], settings: { allowSkip: getSettings().allowSkip } };
+    return { ...v, error: t.error || null, stale: !!t.stale, scannedAt: t.scannedAt, warnings: isStaff(cur().role) ? t.warnings || [] : [], isStaff: isStaff(cur().role), settings: { allowSkip: getSettings().allowSkip } };
   }
   function moduleState(moduleId) {
     const v = currentView();
@@ -204,7 +205,7 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     const prev = m.items.slice(0, idx);
     if (!prev.length) return true;
     const done = new Set(db.prepare('SELECT item_id FROM progress WHERE user_id=? AND completed=1').all(cur().id).map((r) => r.item_id));
-    return prev.every((i) => (!i.required || done.has(i.id)) && (!i.quizFile || lessonQuizPassed(i, m)));
+    return prev.every((i) => (!i.required || done.has(i.id)) && (!i.quizFile || i.quizDisabled || lessonQuizPassed(i, m)));
   }
   /** Test de leçon réussi ? (meilleure note ≥ seuil) */
   function lessonQuizPassed(it, m) {
@@ -214,12 +215,13 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     return r?.best != null && r.best >= ps;
   }
   /** Contexte d'un test de leçon (identifiant « lq:<id de la leçon> »), ou null pour un test de module. */
-  function lessonQuizCtx(id) {
+  function lessonQuizCtx(id, preview = false) {
     if (!String(id).startsWith('lq:')) return null;
     getTree();
     const itemId = String(id).slice(3);
     const it = itemIndex.get(itemId); const m = itemModule.get(itemId);
     if (!it || !m || !it.quizFile) throw new Error('MODULE_UNKNOWN');
+    if (it.quizDisabled && !preview) throw new Error('QUIZ_DISABLED');
     const course = moduleIndex.get(m.id).course;
     const passingScore = it.quizPassingScore ?? m.minScore ?? course.minScore ?? getSettings().minScore;
     if (!isStaff(cur().role)) {
@@ -231,10 +233,11 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     return { it, m, course, passingScore, quiz: r.quiz };
   }
 
-  function resolveQuiz(moduleId, lang) {
+  function resolveQuiz(moduleId, lang, preview = false) {
     getTree();
     const e = moduleIndex.get(moduleId);
     if (!e) throw new Error('MODULE_UNKNOWN');
+    if (e.module.quizDisabled && !preview) return null;
     if (e.module.quiz?.valid) {
       const r = quizEngine.readQuizFile(path.join(getCourseRoot(), e.module.quiz.file));
       if (r.quiz) return { quiz: r.quiz, source: 'file', ...e };
@@ -553,17 +556,35 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     return { dir: out, expires: payload.expires, installer: inst ? inst.name : null };
   });
 
-  // PowerPoint : conversion en PDF (PowerPoint ou LibreOffice), mise en cache ; renvoie le chemin relatif du PDF, servi ensuite comme un PDF ordinaire
-  handle('pptx:prepare', 'user', async (itemId) => {
+  // PowerPoint : 1) PowerPoint exporte chaque diapositive en image (rendu fidèle, comme dans un lecteur de présentations) ;
+  // 2) à défaut, conversion en PDF (PowerPoint ou LibreOffice), servi ensuite comme un PDF ordinaire
+  const pptxItem = (itemId) => {
     getTree();
     const it = itemIndex.get(String(itemId));
     if (!it || it.type !== 'pptx') throw new Error('NOT_FOUND');
     const root = getCourseRoot();
-    const abs = path.resolve(root, it.relPath);
     if (!isStaff(cur().role) && !allowedCourseIds(cur().id).has(toPosix(it.relPath).split('/')[0])) throw new Error('FORBIDDEN');
     if (!lessonUnlocked(it.id)) throw new Error('LESSON_LOCKED');
-    const pdf = await pptxConvert.convert(abs, { platform, log });
-    return { id: toPosix(path.relative(root, pdf)) };
+    return { it, root, abs: path.resolve(root, it.relPath) };
+  };
+  const slideDirs = new Map(); // itemId → dossier des images (jamais fourni par le renderer)
+  handle('pptx:prepare', 'user', async (itemId) => {
+    const { it, root, abs } = pptxItem(itemId);
+    let skipPowerPoint = false;
+    try {
+      const r = await pptxConvert.exportSlides(abs, { platform, log });
+      slideDirs.set(it.id, r);
+      return { kind: 'slides', count: r.files.length };
+    } catch { skipPowerPoint = platform === 'win32'; }
+    const pdf = await pptxConvert.convert(abs, { platform, log, skipPowerPoint });
+    return { kind: 'pdf', id: toPosix(path.relative(root, pdf)) };
+  });
+  handle('pptx:slide', 'user', (itemId, n) => {
+    const { it } = pptxItem(itemId);
+    const r = slideDirs.get(it.id);
+    const i = Math.floor(Number(n)) - 1;
+    if (!r || !(i >= 0 && i < r.files.length)) throw new Error('NOT_FOUND');
+    return 'data:image/png;base64,' + fs.readFileSync(path.join(r.dir, r.files[i])).toString('base64');
   });
 
   // ---------- Applications externes (Office, outils de dev…) choisies par le centre ----------
@@ -624,48 +645,56 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
   });
 
   // Quiz (correction côté main uniquement)
-  handle('quiz:get', 'user', (moduleId, lang) => {
-    const lc = lessonQuizCtx(moduleId);
-    if (lc) return { moduleId, title: lc.quiz.title || lc.it.title, source: 'lesson', passingScore: lc.passingScore, timeLimitSec: lc.quiz.timeLimitSec || null, questions: quizEngine.publicQuestions(lc.quiz) };
+  // preview (formateur / admin uniquement) : le test s'ouvre comme chez l'étudiant, sans verrou, sans enregistrement, avec les bonnes réponses à la correction
+  handle('quiz:get', 'user', (moduleId, lang, preview) => {
+    const pv = !!preview && isStaff(cur().role);
+    const lc = lessonQuizCtx(moduleId, pv);
+    const lg = LANGS.has(lang) ? lang : 'fr';
+    if (lc) return { moduleId, preview: pv, title: quizEngine.quizTitle(lc.quiz, lg) || lc.it.title, source: 'lesson', passingScore: lc.passingScore, timeLimitSec: lc.quiz.timeLimitSec || null, questions: quizEngine.publicQuestions(lc.quiz, lg) };
     const st = moduleState(moduleId);
     if (!isStaff(cur().role) && (!st.unlocked || !st.viewed)) throw new Error('MODULE_LOCKED');
-    const r = resolveQuiz(moduleId, lang);
+    const r = resolveQuiz(moduleId, lang, pv);
     if (!r) throw new Error('NO_QUIZ');
     return {
-      moduleId, title: r.quiz.title || '', source: r.source, passingScore: st.quiz.passingScore,
-      timeLimitSec: r.quiz.timeLimitSec || null, questions: quizEngine.publicQuestions(r.quiz),
+      moduleId, preview: pv, title: quizEngine.quizTitle(r.quiz, lg) || '', source: r.source, passingScore: st.quiz.passingScore ?? getSettings().minScore,
+      timeLimitSec: r.quiz.timeLimitSec || null, questions: quizEngine.publicQuestions(r.quiz, lg),
     };
   });
-  handle('quiz:submit', 'user', (moduleId, answers, durationSec, lang) => {
-    const lc = lessonQuizCtx(moduleId);
-    if (lc) {
-      const { score, details } = quizEngine.grade(lc.quiz, answers);
-      const passed = score >= lc.passingScore;
+  handle('quiz:submit', 'user', (moduleId, answers, durationSec, lang, preview) => {
+    const pv = !!preview && isStaff(cur().role);
+    const lg = LANGS.has(lang) ? lang : 'fr';
+    const record = (id, score, passed) => {
+      if (pv) return false;
       db.prepare('INSERT INTO quiz_results(user_id,module_id,score,passed,answers_json,duration_sec,created_at) VALUES(?,?,?,?,?,?,?)')
-        .run(cur().id, moduleId, score, passed ? 1 : 0, JSON.stringify(answers || {}), Math.round(Number(durationSec) || 0), Date.now());
-      let certificate = false;
-      if (passed && cur().role === 'student') {
-        const before = db.prepare('SELECT COUNT(*) c FROM certificates WHERE user_id=?').get(cur().id).c;
-        ensureCertificates(cur().id);
-        certificate = db.prepare('SELECT COUNT(*) c FROM certificates WHERE user_id=?').get(cur().id).c > before;
-      }
-      return { score, passed, passingScore: lc.passingScore, details, certificate };
+        .run(cur().id, id, score, passed ? 1 : 0, JSON.stringify(answers || {}), Math.round(Number(durationSec) || 0), Date.now());
+      if (!(passed && cur().role === 'student')) return false;
+      const before = db.prepare('SELECT COUNT(*) c FROM certificates WHERE user_id=?').get(cur().id).c;
+      ensureCertificates(cur().id);
+      return db.prepare('SELECT COUNT(*) c FROM certificates WHERE user_id=?').get(cur().id).c > before;
+    };
+    const lc = lessonQuizCtx(moduleId, pv);
+    if (lc) {
+      const { score, details } = quizEngine.grade(lc.quiz, answers, lg, pv);
+      const passed = score >= lc.passingScore;
+      return { preview: pv, score, passed, passingScore: lc.passingScore, details, certificate: record(moduleId, score, passed) };
     }
     const st = moduleState(moduleId);
     if (!isStaff(cur().role) && (!st.unlocked || !st.viewed)) throw new Error('MODULE_LOCKED');
-    const r = resolveQuiz(moduleId, lang);
+    const r = resolveQuiz(moduleId, lang, pv);
     if (!r) throw new Error('NO_QUIZ');
-    const { score, details } = quizEngine.grade(r.quiz, answers);
-    const passed = score >= st.quiz.passingScore;
-    db.prepare('INSERT INTO quiz_results(user_id,module_id,score,passed,answers_json,duration_sec,created_at) VALUES(?,?,?,?,?,?,?)')
-      .run(cur().id, moduleId, score, passed ? 1 : 0, JSON.stringify(answers || {}), Math.round(Number(durationSec) || 0), Date.now());
-    let certificate = false;
-    if (passed && cur().role === 'student') {
-      const before = db.prepare('SELECT COUNT(*) c FROM certificates WHERE user_id=?').get(cur().id).c;
-      ensureCertificates(cur().id);
-      certificate = db.prepare('SELECT COUNT(*) c FROM certificates WHERE user_id=?').get(cur().id).c > before;
-    }
-    return { score, passed, passingScore: st.quiz.passingScore, details, certificate };
+    const { score, details } = quizEngine.grade(r.quiz, answers, lg, pv);
+    const ps = st.quiz.passingScore ?? getSettings().minScore;
+    const passed = score >= ps;
+    return { preview: pv, score, passed, passingScore: ps, details, certificate: record(moduleId, score, passed) };
+  });
+
+  // Sous-titres / transcriptions du média (<média>.<langue>.vtt|srt) — mêmes contrôles d'accès que la lecture du média
+  handle('media:subtitles', 'user', (itemId) => {
+    getTree();
+    const it = itemIndex.get(itemId);
+    if (!it || (it.type !== 'video' && it.type !== 'audio')) return [];
+    const abs = resolveMedia(it.relPath);
+    return abs ? listSubtitles(abs) : [];
   });
 
   // Certificat : l'étudiant voit le sien, le formateur celui de n'importe qui
@@ -833,21 +862,85 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     if (!e) throw new Error('MODULE_UNKNOWN');
     return path.join(e.module.absPath, 'quiz.json');
   };
+  /** Tests classés par cours → module : test final du module + test de chaque leçon */
+  handle('admin:quizzes:list', 'staff', () => {
+    getTree();
+    const count = (rel) => { try { const q = JSON.parse(fs.readFileSync(path.join(getCourseRoot(), rel), 'utf8').replace(/^\uFEFF/, '')); return { n: Array.isArray(q.questions) ? q.questions.length : 0, multi: quizEngine.hasI18n(q) }; } catch { return { n: 0, multi: false, broken: true }; } };
+    return tree.courses.map((c) => ({
+      id: c.id, title: c.title,
+      modules: c.modules.filter((m) => !m.id.endsWith('/_general') || m.items.length).map((m) => {
+        const fin = m.quiz ? count(m.quiz.file) : null;
+        return {
+          id: m.id, title: m.title,
+          tests: [
+            { id: m.id, kind: 'module', title: m.title, exists: !!m.quiz, questions: fin?.n || 0, multilingual: !!fin?.multi, enabled: !m.quizDisabled },
+            ...m.items.map((i) => { const x = i.quizFile ? count(i.quizFile) : null; return { id: `lq:${i.id}`, kind: 'lesson', title: i.title, type: i.type, exists: !!i.quizFile, questions: x?.n || 0, multilingual: !!x?.multi, enabled: !i.quizDisabled }; }),
+          ],
+        };
+      }),
+    }));
+  });
   handle('admin:quiz:read', 'staff', (moduleId) => {
     const f = quizTargetFile(moduleId);
     const blank = { version: 1, title: '', passingScore: getSettings().minScore, timeLimitSec: null, shuffleQuestions: false, questions: [] };
     if (!fs.existsSync(f)) return { exists: false, quiz: blank };
-    try { return { exists: true, quiz: { ...blank, ...JSON.parse(fs.readFileSync(f, 'utf8').replace(/^﻿/, '')) } }; }
+    try { const q = { ...blank, ...JSON.parse(fs.readFileSync(f, 'utf8').replace(/^﻿/, '')) }; return { exists: true, quiz: q, multilingual: quizEngine.hasI18n(q) }; }
     catch (err) { return { exists: true, quiz: blank, broken: err.message }; }
   });
   handle('admin:quiz:save', 'staff', (moduleId, quiz) => {
     const target = quizTargetFile(moduleId);
     const errors = quizEngine.validateQuiz(quiz);
     if (errors.length) return { saved: false, errors };
+    // un test multilingue (textes { fr, en, es }) ne s'édite que dans le fichier JSON : le formulaire l'aplatirait
+    try { if (fs.existsSync(target) && quizEngine.hasI18n(JSON.parse(fs.readFileSync(target, 'utf8').replace(/^﻿/, ''))) && !quizEngine.hasI18n(quiz)) throw new Error('QUIZ_MULTILINGUAL'); } catch (e) { if (e.message === 'QUIZ_MULTILINGUAL') throw e; }
     const clean = { version: 1, title: String(quiz.title || ''), passingScore: quiz.passingScore ?? null, timeLimitSec: quiz.timeLimitSec || null, shuffleQuestions: !!quiz.shuffleQuestions, questions: quiz.questions };
     fs.writeFileSync(target, JSON.stringify(clean, null, 2), 'utf8');
     tree = null;
     return { saved: true, errors: [] };
+  });
+
+  // ---------- Admin : réglages des leçons (portion de vidéo visible, tests activés/désactivés) — stockés dans le manifest.json du module ----------
+  handle('admin:lessons:list', 'staff', () => {
+    getTree();
+    return tree.courses.map((c) => ({
+      id: c.id, title: c.title,
+      modules: c.modules.filter((m) => !m.id.endsWith('/_general') || m.items.length).map((m) => ({
+        id: m.id, title: m.title, quizExists: !!(m.quiz && m.quiz.valid), quizEnabled: !m.quizDisabled,
+        items: m.items.map((i) => ({ id: i.id, title: i.title, type: i.type, clip: i.clip || null, quizExists: !!i.quizFile, quizEnabled: !i.quizDisabled })),
+      })),
+    }));
+  });
+  handle('admin:lessons:save', 'staff', (moduleId, itemId, patch = {}) => {
+    getTree();
+    const e = moduleIndex.get(String(moduleId));
+    if (!e) throw new Error('MODULE_UNKNOWN');
+    const file = path.join(e.module.absPath, 'manifest.json');
+    let mf = {};
+    try { mf = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')); } catch { /* nouveau manifest */ }
+    if (itemId) {
+      const it = e.module.items.find((i) => i.id === String(itemId));
+      if (!it) throw new Error('ITEM_UNKNOWN');
+      const key = toPosix(path.relative(e.module.absPath, path.join(getCourseRoot(), it.relPath)));
+      const cur0 = { ...((mf.lessons || {})[key] || {}) };
+      if ('clip' in patch) {
+        const c = patch.clip;
+        if (c == null) delete cur0.clip;
+        else {
+          const start = Number(c.start); const end = Number(c.end);
+          if (!(start >= 0) || !(end > start)) throw new Error('BAD_CLIP');
+          cur0.clip = { start: Math.round(start * 10) / 10, end: Math.round(end * 10) / 10 };
+        }
+      }
+      if ('quizEnabled' in patch) { if (patch.quizEnabled) delete cur0.quiz; else cur0.quiz = false; }
+      mf.lessons = { ...(mf.lessons || {}) };
+      if (Object.keys(cur0).length) mf.lessons[key] = cur0; else delete mf.lessons[key];
+      if (!Object.keys(mf.lessons).length) delete mf.lessons;
+    } else if ('quizEnabled' in patch) {
+      if (patch.quizEnabled) delete mf.quizEnabled; else mf.quizEnabled = false;
+    }
+    fs.writeFileSync(file, JSON.stringify(mf, null, 2), 'utf8');
+    tree = null; treeVersion += 1;
+    return true;
   });
 
   // ---------- Admin : statistiques, relevés, résultats ----------
