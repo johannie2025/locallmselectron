@@ -60,6 +60,13 @@ function collectFiles(dir, warnings, acc = []) {
   return acc;
 }
 
+/** Portion de vidéo/audio visible par l'étudiant : { start, end } en secondes (manifest.json > lessons > <fichier> > clip) */
+function clipOf(l) {
+  const c = l && l.clip;
+  if (!c || !Number.isFinite(c.start) || !Number.isFinite(c.end) || c.start < 0 || c.end <= c.start) return null;
+  return { start: Math.round(c.start * 10) / 10, end: Math.round(c.end * 10) / 10 };
+}
+
 function buildItems(moduleDir, root, manifest, warnings) {
   const files = collectFiles(moduleDir, warnings);
   const lower = new Map(files.map((f) => [f.toLowerCase(), f]));
@@ -93,6 +100,8 @@ function buildItems(moduleDir, root, manifest, warnings) {
       size,
       viewable: true, // les .pptx sont convertis en PDF à l'ouverture (PowerPoint ou LibreOffice installé sur le poste)
       required: type !== 'pptx',
+      clip: clipOf(manifest?.lessons?.[toPosix(path.relative(moduleDir, abs))]),
+      quizDisabled: manifest?.lessons?.[toPosix(path.relative(moduleDir, abs))]?.quiz === false,
       _name: toPosix(path.relative(moduleDir, abs)),
     });
   }
@@ -145,6 +154,7 @@ function buildModule(moduleDir, root, courseId, dirName, warnings, opts = {}) {
     order: Number.isFinite(manifest.order) ? manifest.order : (opts.rootModule ? -Infinity : null),
     prerequisites: Array.isArray(manifest.prerequisites) ? manifest.prerequisites.map(String) : [],
     minScore: typeof manifest.minScore === 'number' ? manifest.minScore : null,
+    quizDisabled: manifest.quizEnabled === false, // test final désactivé par le formateur (manifest.json)
     items,
     quiz,
     absPath: moduleDir,

@@ -21,8 +21,8 @@ function buildView(tree, ctx) {
         : 100;
       const viewed = viewedCount === req.length;
 
-      const fileQuiz = m.quiz && m.quiz.valid;
-      const auto = !fileQuiz && settings.autoQuiz ? autoQuiz(course, m) : null;
+      const fileQuiz = m.quiz && m.quiz.valid && !m.quizDisabled;
+      const auto = !fileQuiz && !m.quizDisabled && settings.autoQuiz ? autoQuiz(course, m) : null;
       const quizRequired = !!fileQuiz || !!auto;
       // NB : `fileQuiz ? … : null` et non `fileQuiz && …` : un quiz.json invalide donnerait `false`, que `??` ne remplace pas
       const passingScore = (fileQuiz ? m.quiz.passingScore : null) ?? m.minScore ?? course.minScore ?? settings.minScore;
@@ -30,7 +30,7 @@ function buildView(tree, ctx) {
       const quizPassed = !quizRequired || (best.best != null && best.best >= passingScore);
       // Tests de leçon (<leçon>.quiz.json) : un par leçon, à réussir avant la leçon suivante
       const lessonQuiz = (i) => {
-        if (!i.quizFile) return null;
+        if (!i.quizFile || i.quizDisabled) return null;
         const b = quizBest.get(`lq:${i.id}`) || { best: null, attempts: 0 };
         const ps = i.quizPassingScore ?? m.minScore ?? course.minScore ?? settings.minScore;
         return { required: true, passingScore: ps, bestScore: b.best, attempts: b.attempts, passed: b.best != null && b.best >= ps };
@@ -54,13 +54,13 @@ function buildView(tree, ctx) {
           // Leçons en séquence : une leçon s'ouvre quand la précédente (obligatoire) est terminée ; formateurs/admins : tout ouvert
           unlocked: isAdmin || m.items.slice(0, idx).every((p) => (!p.required || progress.get(p.id)?.completed) && (!lq.get(p.id) || lq.get(p.id).passed)),
           quiz: lq.get(i.id),
-          id: i.id, type: i.type, title: i.title, size: i.size, viewable: i.viewable, required: i.required, order: i.order,
+          clip: i.clip || null, id: i.id, type: i.type, title: i.title, size: i.size, viewable: i.viewable, required: i.required, order: i.order,
           percent: Math.round(progress.get(i.id)?.percent || 0),
           positionSec: progress.get(i.id)?.position_sec || 0,
           completed: !!progress.get(i.id)?.completed,
         })),
         viewed: viewed && lessonsOk, viewedPercent,
-        quiz: { required: quizRequired, source: fileQuiz ? 'file' : auto ? 'auto' : null, passingScore, bestScore: best.best, attempts: best.attempts, passed: quizPassed },
+        quiz: { disabled: !!m.quizDisabled, exists: !!(m.quiz && m.quiz.valid), required: quizRequired, source: fileQuiz ? 'file' : auto ? 'auto' : null, passingScore, bestScore: best.best, attempts: best.attempts, passed: quizPassed },
         completed, unlocked,
       });
     }
