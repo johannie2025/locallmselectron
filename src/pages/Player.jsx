@@ -46,8 +46,8 @@ function Media({ item, free, onProgress }) {
 
   // Sous-titres / transcriptions : fichiers <média>.<langue>.vtt|srt à côté du média. La langue suit celle de l'interface.
   const [subs, setSubs] = useState([]);
-  const [subLang, setSubLang] = useState('off');
-  const [trLang, setTrLang] = useState('');
+  const [subLang, setSubLang] = useState(''); // langue choisie, partagée entre sous-titres et transcription
+  const [ccOn, setCcOn] = useState(false);
   const [trOpen, setTrOpen] = useState(false);
   const [now, setNow] = useState(0);
   useEffect(() => {
@@ -61,14 +61,14 @@ function Media({ item, free, onProgress }) {
   }, [item.id]);
   useEffect(() => {
     const own = subs.find((x) => x.lang === lang);
-    setSubLang(own ? lang : 'off');
-    setTrLang((own || subs.find((x) => x.lang === 'en') || subs[0])?.lang || '');
+    setCcOn(!!own);
+    setSubLang((own || subs.find((x) => x.lang === 'en') || subs[0])?.lang || '');
   }, [subs, lang]);
   useEffect(() => {
     const v = ref.current; if (!v) return;
-    for (const tr of Array.from(v.textTracks || [])) tr.mode = tr.language === subLang ? 'showing' : 'disabled';
-  }, [subs, subLang]);
-  const cuesAll = subs.find((x) => x.lang === trLang)?.cues || [];
+    for (const tr of Array.from(v.textTracks || [])) tr.mode = ccOn && tr.language === subLang ? 'showing' : 'disabled';
+  }, [subs, subLang, ccOn]);
+  const cuesAll = subs.find((x) => x.lang === subLang)?.cues || [];
   const cues = !free && item.clip ? cuesAll.filter((c) => c.end > item.clip.start && c.start < item.clip.end) : cuesAll;
   const active = cues.findIndex((c) => now >= c.start && now < c.end);
   const panelRef = useRef(null);
@@ -120,8 +120,11 @@ function Media({ item, free, onProgress }) {
       const pos = Math.max(from, item.positionSec || 0);
       const limit = clip ? clip.end - 1 : v.duration - 2;
       const t0 = pos < limit ? pos : from;
+      // zone déjà vue : mémorisée côté serveur (pourcentage de la portion) — leçon terminée = tout est accessible
+      const end = clip ? clip.end : v.duration;
+      const seen = item.completed ? end : from + (Math.min(100, item.percent || 0) / 100) * (end - from);
+      maxRef.current = Math.max(seen, t0); lastT.current = t0;
       if (t0 > 0) v.currentTime = t0;
-      maxRef.current = t0; lastT.current = t0;
     },
     // Saut (barre de progression) : refusé au-delà de la position déjà vue (sauf avance autorisée / formateur) et hors de la portion
     onSeeking: (e) => {
@@ -164,7 +167,7 @@ function Media({ item, free, onProgress }) {
       {boostBar}
       {subs.length > 0 && !isAudio && (
         <label className="flex items-center gap-1 text-sm">💬
-          <select className="input !py-1 !w-auto" value={subLang} onChange={(e) => { setSubLang(e.target.value); if (e.target.value !== 'off') setTrLang(e.target.value); }} aria-label={t('player.subtitles')}>
+          <select className="input !py-1 !w-auto" value={ccOn ? subLang : 'off'} onChange={(e) => { if (e.target.value === 'off') setCcOn(false); else { setSubLang(e.target.value); setCcOn(true); } }} aria-label={t('player.subtitles')}>
             <option value="off">{t('player.subsOff')}</option>
             {subs.map((x) => <option key={x.lang} value={x.lang}>{langLabel(x.lang, lang)}</option>)}
           </select>
@@ -177,7 +180,7 @@ function Media({ item, free, onProgress }) {
     <aside className="w-80 shrink-0 card !p-3 flex flex-col min-h-0 max-h-full text-left">
       <div className="flex items-center gap-2 mb-2">
         <b className="flex-1">{t('player.transcript')}</b>
-        <select className="input !py-1 !w-auto" value={trLang} onChange={(e) => setTrLang(e.target.value)}>
+        <select className="input !py-1 !w-auto" value={subLang} onChange={(e) => setSubLang(e.target.value)}>
           {subs.map((x) => <option key={x.lang} value={x.lang}>{langLabel(x.lang, lang)}</option>)}
         </select>
         <button className="text-slate-400 hover:text-white" onClick={() => setTrOpen(false)} aria-label="close">✕</button>

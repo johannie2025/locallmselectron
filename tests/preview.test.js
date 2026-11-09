@@ -74,3 +74,29 @@ test('aperçu formateur : liste par module, test désactivé accessible sans enr
   assert.deepStrictEqual(s.data.map((x) => x.lang).sort(), ['en', 'fr']);
   assert.ok(s.data.find((x) => x.lang === 'en').vtt.includes('00:00:00.000 --> 00:00:02.000'));
 });
+
+test('cases « test activé » : la désactivation est enregistrée et relue', async () => {
+  const root = tmp('wls-en-');
+  const mod = path.join(root, 'Cours_A', 'Module_01'); fs.mkdirSync(mod, { recursive: true });
+  fs.writeFileSync(path.join(mod, 'intro.mp4'), Buffer.alloc(100));
+  const quiz = { version: 1, title: 'T', passingScore: 50, questions: [{ id: 'q1', type: 'true_false', text: 'Vrai ?', answer: true }] };
+  fs.writeFileSync(path.join(mod, 'intro.quiz.json'), JSON.stringify(quiz));
+  fs.writeFileSync(path.join(mod, 'quiz.json'), JSON.stringify(quiz));
+  handlers.clear();
+  const dir = tmp('wls-end-');
+  const db = openDb(path.join(dir, 'lms.sqlite'));
+  const svc = createServices({ db, config: { courseRoot: root, dataDir: dir }, getWindow: () => null, quitApp() {}, setOnTop() {}, log() {} });
+  test.after(() => svc.stop());
+  const h = new Map(handlers);
+  const call = async (ch, ...a) => h.get(ch)({}, ...a);
+  assert.ok((await call('auth:login', 'superadmin', 'Super@1234')).ok);
+  let l = (await call('admin:lessons:list')).data[0].modules[0];
+  assert.ok(l.items[0].quizEnabled && l.quizEnabled);
+  let r = await call('admin:lessons:save', l.id, l.items[0].id, { quizEnabled: false }); assert.ok(r.ok, r.error);
+  r = await call('admin:lessons:save', l.id, null, { quizEnabled: false }); assert.ok(r.ok, r.error);
+  l = (await call('admin:lessons:list')).data[0].modules[0];
+  assert.strictEqual(l.items[0].quizEnabled, false); assert.strictEqual(l.quizEnabled, false);
+  await call('admin:lessons:save', l.id, l.items[0].id, { quizEnabled: true });
+  l = (await call('admin:lessons:list')).data[0].modules[0];
+  assert.strictEqual(l.items[0].quizEnabled, true);
+});

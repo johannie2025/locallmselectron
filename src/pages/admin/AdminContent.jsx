@@ -285,8 +285,60 @@ function QuizEditor() {
   );
 }
 
-const fmt = (s) => { const n = Math.max(0, Math.round(Number(s) || 0)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
-const parseTime = (v) => { const m = String(v).trim().match(/^(?:(\d+):)?(\d+(?:[.,]\d+)?)$/); return m ? (Number(m[1] || 0) * 60 + Number(m[2].replace(',', '.'))) : NaN; };
+const fmt = (s, dec = false) => {
+  const v = Math.max(0, Number(s) || 0); const n = Math.floor(v);
+  const d = dec && v - n >= 0.05 ? `.${Math.round((v - n) * 10) % 10}` : '';
+  const h = Math.floor(n / 3600); const m = Math.floor((n % 3600) / 60); const sec = n % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}${d}` : `${m}:${String(sec).padStart(2, '0')}${d}`;
+};
+/** « 90 », « 1:30 », « 1:02:03 », « 1:30.5 » → secondes (NaN si invalide) */
+const parseTime = (v) => {
+  const parts = String(v).trim().replace(',', '.').split(':');
+  if (!parts.length || parts.length > 3 || parts.some((x) => !/^\d+(\.\d+)?$/.test(x))) return NaN;
+  return parts.reduce((acc, x) => acc * 60 + Number(x), 0);
+};
+
+/** Ligne du temps : deux poignées glissables (début / fin) sur la durée du média, tête de lecture cliquable. */
+function ClipBar({ duration, start, end, now, onStart, onEnd, onSeek }) {
+  const { t } = useI18n();
+  const ref = useRef(null);
+  const D = duration > 0 ? duration : 0;
+  const pct = (x) => (D ? Math.min(100, Math.max(0, (x / D) * 100)) : 0);
+  const at = (e) => { const r = ref.current.getBoundingClientRect(); return Math.min(D, Math.max(0, ((e.clientX - r.left) / r.width) * D)); };
+  const r1 = (x) => Math.round(x * 10) / 10;
+  const a = Number.isFinite(start) ? start : 0;
+  const b = Number.isFinite(end) ? end : D;
+  const grab = (which) => ({
+    onPointerDown: (e) => { e.preventDefault(); e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId); },
+    onPointerMove: (e) => {
+      if (!e.currentTarget.hasPointerCapture(e.pointerId) || !D) return;
+      const x = at(e);
+      if (which === 'start') { const v = r1(Math.min(x, b - 0.5)); onStart(Math.max(0, v)); onSeek(Math.max(0, v)); }
+      else { const v = r1(Math.max(x, a + 0.5)); onEnd(Math.min(D, v)); onSeek(Math.min(D, v)); }
+    },
+    onKeyDown: (e) => {
+      const st = e.shiftKey ? 5 : 0.5; const dir = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+      if (!dir) return; e.preventDefault();
+      if (which === 'start') onStart(r1(Math.max(0, Math.min(b - 0.5, a + dir * st)))); else onEnd(r1(Math.min(D, Math.max(a + 0.5, b + dir * st))));
+    },
+  });
+  return (
+    <div className="select-none">
+      <div ref={ref} className="relative h-10 rounded bg-slate-800 cursor-pointer touch-none" onPointerDown={(e) => { if (D) onSeek(at(e)); }} title={t('ls.barHelp')}>
+        <div className="absolute inset-y-0 rounded bg-emerald-500/40 border-y-2 border-emerald-400" style={{ left: `${pct(a)}%`, width: `${Math.max(0, pct(b) - pct(a))}%` }} />
+        <div className="absolute inset-y-0 w-0.5 bg-white pointer-events-none" style={{ left: `${pct(now)}%` }} />
+        {[['start', a], ['end', b]].map(([k, v]) => (
+          <div key={k} role="slider" tabIndex={0} aria-label={t(k === 'start' ? 'ls.start' : 'ls.end')} aria-valuenow={Math.round(v)} {...grab(k)}
+            className="absolute -top-1 -bottom-1 w-3.5 -ml-[7px] rounded bg-emerald-400 hover:bg-emerald-300 cursor-ew-resize touch-none grid place-items-center"
+            style={{ left: `${pct(v)}%` }}><span className="block w-0.5 h-4 bg-slate-900/70" /></div>
+        ))}
+      </div>
+      <div className="flex justify-between text-xs font-mono text-slate-300 mt-1">
+        <span>0:00</span><span className="text-emerald-300">{fmt(a, true)} → {fmt(b, true)} ({fmt(Math.max(0, b - a), true)})</span><span>{fmt(D)}</span>
+      </div>
+    </div>
+  );
+}
 
 /** Réglages des leçons : portion de vidéo visible par l'étudiant, tests (leçon / module) activés ou désactivés. */
 function LessonSettings() {
@@ -296,13 +348,22 @@ function LessonSettings() {
   const [sel, setSel] = useState(null); // { moduleId, item }
   const [from, setFrom] = useState(''); const [to, setTo] = useState('');
   const vid = useRef(null);
+  const [dur, setDur] = useState(0); const [curT, setCurT] = useState(0); const [prev, setPrev] = useState(false);
   const load = () => api('admin:lessons:list').then(setList).catch((e) => toast(errText(e, t), 'err'));
   useEffect(() => { load(); }, []);
-  const save = async (moduleId, itemId, patch) => { try { await api('admin:lessons:save', moduleId, itemId, patch); await load(); toast(t('common.saved')); } catch (e) { toast(errText(e, t), 'err'); } };
-  const pick = (moduleId, item) => { setSel({ moduleId, item }); setFrom(item.clip ? fmt(item.clip.start) : ''); setTo(item.clip ? fmt(item.clip.end) : ''); };
+  const save = async (moduleId, itemId, patch) => {
+    if ('quizEnabled' in patch) // affichage immédiat de la case, puis relecture du serveur
+      setList((l) => l.map((c) => ({ ...c, modules: c.modules.map((m) => (m.id !== moduleId ? m : itemId ? { ...m, items: m.items.map((i) => (i.id === itemId ? { ...i, quizEnabled: patch.quizEnabled } : i)) } : { ...m, quizEnabled: patch.quizEnabled })) })));
+    try { await api('admin:lessons:save', moduleId, itemId, patch); await load(); toast(t('common.saved')); } catch (e) { await load(); toast(errText(e, t), 'err'); }
+  };
+  const pick = (moduleId, item) => { setDur(0); setCurT(0); setPrev(false); setSel({ moduleId, item }); setFrom(item.clip ? fmt(item.clip.start) : ''); setTo(item.clip ? fmt(item.clip.end) : ''); };
   const cur = () => (vid.current ? vid.current.currentTime : 0);
+  const seek = (x) => { if (vid.current) vid.current.currentTime = x; };
+  const r1 = (x) => Math.round(x * 10) / 10;
+  const mediaEv = { onLoadedMetadata: (e) => setDur(e.target.duration || 0), onDurationChange: (e) => setDur(e.target.duration || 0), onSeeked: (e) => setCurT(e.target.currentTime), onTimeUpdate: (e) => { setCurT(e.target.currentTime); const b = parseTime(to); if (prev && Number.isFinite(b) && e.target.currentTime >= b) { e.target.pause(); setPrev(false); } } };
+  const playPortion = () => { const a = parseTime(from); seek(Number.isFinite(a) ? a : 0); setPrev(true); vid.current?.play?.(); };
   const saveClip = () => {
-    const a = parseTime(from); const b = parseTime(to);
+    const a = from.trim() === '' ? 0 : parseTime(from); const b = to.trim() === '' && dur ? r1(dur) : parseTime(to);
     if (!(a >= 0) || !(b > a)) { toast(t('err.BAD_CLIP'), 'err'); return; }
     save(sel.moduleId, sel.item.id, { clip: { start: a, end: b } }).then(() => setSel((s) => s && { ...s, item: { ...s.item, clip: { start: a, end: b } } }));
   };
@@ -335,13 +396,19 @@ function LessonSettings() {
         <Modal title={`${t('ls.clipTitle')} — ${sel.item.title}`} onClose={() => setSel(null)} wide>
           <div className="space-y-3">
             {sel.item.type === 'video'
-              ? <video ref={vid} src={'lms-media://f/' + sel.item.id.split('/').map(encodeURIComponent).join('/')} crossOrigin="anonymous" controls className="w-full max-h-[50vh] bg-black rounded" />
-              : <audio ref={vid} src={'lms-media://f/' + sel.item.id.split('/').map(encodeURIComponent).join('/')} crossOrigin="anonymous" controls className="w-full" />}
+              ? <video ref={vid} src={'lms-media://f/' + sel.item.id.split('/').map(encodeURIComponent).join('/')} crossOrigin="anonymous" controls className="w-full max-h-[50vh] bg-black rounded" {...mediaEv} />
+              : <audio ref={vid} src={'lms-media://f/' + sel.item.id.split('/').map(encodeURIComponent).join('/')} crossOrigin="anonymous" controls className="w-full" {...mediaEv} />}
+            <ClipBar duration={dur} start={parseTime(from)} end={parseTime(to)} now={curT} onStart={(v) => setFrom(fmt(v, true))} onEnd={(v) => setTo(fmt(v, true))} onSeek={seek} />
+            <div className="flex flex-wrap gap-2">
+              <button className="btn-ghost btn-sm" onClick={() => setFrom(fmt(r1(cur()), true))}>⟦ {t('ls.startHere')}</button>
+              <button className="btn-ghost btn-sm" onClick={() => setTo(fmt(r1(cur()), true))}>⟧ {t('ls.endHere')}</button>
+              <button className="btn-ghost btn-sm" onClick={playPortion}>▶ {t('ls.playPortion')}</button>
+            </div>
             <div className="grid sm:grid-cols-2 gap-3">
               <div><label className="label">{t('ls.start')}</label>
-                <div className="flex gap-2"><input className="input font-mono" value={from} onChange={(e) => setFrom(e.target.value)} placeholder="0:00" /><button className="btn-ghost btn-sm whitespace-nowrap" onClick={() => setFrom(fmt(cur()))}>{t('ls.useCurrent')}</button></div></div>
+                <div className="flex gap-2"><input className="input font-mono" value={from} onChange={(e) => setFrom(e.target.value)} placeholder="0:00" /><button className="btn-ghost btn-sm whitespace-nowrap" onClick={() => setFrom(fmt(r1(cur()), true))}>{t('ls.useCurrent')}</button></div></div>
               <div><label className="label">{t('ls.end')}</label>
-                <div className="flex gap-2"><input className="input font-mono" value={to} onChange={(e) => setTo(e.target.value)} placeholder="5:30" /><button className="btn-ghost btn-sm whitespace-nowrap" onClick={() => setTo(fmt(cur()))}>{t('ls.useCurrent')}</button></div></div>
+                <div className="flex gap-2"><input className="input font-mono" value={to} onChange={(e) => setTo(e.target.value)} placeholder="5:30" /><button className="btn-ghost btn-sm whitespace-nowrap" onClick={() => setTo(fmt(r1(cur()), true))}>{t('ls.useCurrent')}</button></div></div>
             </div>
             <div className="flex gap-2">
               <button className="btn-primary" onClick={saveClip}>{t('common.save')}</button>

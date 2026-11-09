@@ -60,3 +60,10 @@ Placer, à côté de la vidéo (ou de l'audio), un fichier par langue : `<nom-du
 
 ## Éditeur de tests (v1.10)
 Contenu > Éditeur de quiz : cours → module (clic pour déplier) → test final 🏁 ou test d'une leçon. Bouton « Tester comme l'étudiant » : le test s'ouvre tel que l'étudiant le voit (même désactivé), sans verrou ni enregistrement, avec les bonnes réponses à la correction. Les formateurs/admins qui ouvrent un test depuis le tableau de bord sont aussi en aperçu.
+
+## Corrections v1.10.1
+- Portion de vidéo : ligne du temps avec deux poignées glissables (début / fin), tête de lecture cliquable, boutons « Début ici » / « Fin ici » / « Lire la portion », saisie `m:ss`, `h:mm:ss` ou décimales (`1:30.5`).
+- Lecteur : la zone déjà regardée est mémorisée (même après fermeture ou leçon terminée) et reste accessible pour avancer/reculer ; seul le saut au-delà de la zone vue est refusé aux étudiants.
+- Sous-titres et transcription partagent la même langue (menu 💬 ou menu de la transcription).
+- Cases « test activé » : affichage immédiat + relecture ; erreur explicite si manifest.json est invalide.
+- Écran de connexion : « Quitter » n'envoie plus le formulaire de connexion ; il ouvre la fenêtre de sortie (identifiants admin, case « lever les restrictions »).

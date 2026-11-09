@@ -12,12 +12,12 @@ export default function AdminExit({ className = '' }) {
   const [maint, setMaint] = useState(false);
   const [err, setErr] = useState('');
   const submit = async (e) => {
-    e.preventDefault();
+    e.preventDefault(); e.stopPropagation(); // le formulaire de sortie (portail) ne doit jamais déclencher la connexion du formulaire parent
     try { await api('auth:adminExit', u, p, maint); } catch (x) { setErr(errText(x, t)); }
   };
   return (
     <>
-      <button className={`btn-ghost btn-sm ${className}`} onClick={() => setOpen(true)}>⏻ {t('login.exit')}</button>
+      <button type="button" className={`btn-ghost btn-sm ${className}`} onClick={() => setOpen(true)}>⏻ {t('login.exit')}</button>
       {open && (
         <Modal title={t('login.exit')} onClose={() => setOpen(false)}>
           <form onSubmit={submit} className="space-y-3">

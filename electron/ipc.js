@@ -940,6 +940,13 @@ function createServices({ db, config, getWindow, quitApp, setOnTop, log, onExter
     }
     fs.writeFileSync(file, JSON.stringify(mf, null, 2), 'utf8');
     tree = null; treeVersion += 1;
+    // relecture : le réglage doit réellement être pris en compte par l'analyse des cours
+    getTree();
+    const e2 = moduleIndex.get(String(moduleId));
+    if ('quizEnabled' in patch && e2) {
+      const now = itemId ? !e2.module.items.find((i) => i.id === String(itemId))?.quizDisabled : !e2.module.quizDisabled;
+      if (now !== !!patch.quizEnabled) { log(`admin:lessons:save: réglage non relu (${file})`); throw new Error('MANIFEST_NOT_APPLIED'); }
+    }
     return true;
   });
 
